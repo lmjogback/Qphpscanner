@@ -57,9 +57,14 @@ type Detection struct {
 	EndOfLife     bool   `json:"end_of_life,omitempty"`
 	EOLDetail     string `json:"eol_detail,omitempty"`
 
-	Frameworks []string `json:"frameworks,omitempty"`
-	Extensions []string `json:"extensions,omitempty"`
-	Modules    []string `json:"modules,omitempty"`
+	Frameworks        []string          `json:"frameworks,omitempty"`
+	FrameworkVersions map[string]string `json:"framework_versions,omitempty" xml:"-"`
+	Extensions        []string          `json:"extensions,omitempty"`
+	Modules           []string          `json:"modules,omitempty"`
+
+	// FaviconHash is the Shodan-style mmh3 hash of the site favicon, when one
+	// was fetched (deep mode). Useful for pivoting/fingerprinting.
+	FaviconHash string `json:"favicon_hash,omitempty"`
 
 	PHPInfoExposed bool   `json:"phpinfo_exposed,omitempty"`
 	PHPInfoURL     string `json:"phpinfo_url,omitempty"`

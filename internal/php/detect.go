@@ -21,6 +21,12 @@ type Input struct {
 	// Easter* are the expose_php easter-egg probe responses (deep mode).
 	EasterCredits *probe.Response
 	EasterLogo    *probe.Response
+	// Favicon is the /favicon.ico response (deep mode), used for a Shodan-style
+	// mmh3 fingerprint hash.
+	Favicon *probe.Response
+	// Catalog supplies vulnerability/EOL data. When nil, the built-in default
+	// catalogue is used.
+	Catalog *Catalog
 }
 
 const maxDataLen = 200
@@ -129,6 +135,17 @@ func Analyze(in Input) *Detection {
 	// --- Easter eggs --------------------------------------------------------
 	analyzeEasterEggs(in, addEv, setVersion)
 
+	// --- Favicon fingerprint (deep mode) ------------------------------------
+	if in.Favicon != nil && in.Favicon.Err == "" && in.Favicon.Status == 200 && len(in.Favicon.Body) > 0 {
+		d.FaviconHash = faviconHash(in.Favicon.Body)
+	}
+
+	// --- CMS / framework versions -------------------------------------------
+	cmsVersions := detectCMSVersions(in, fwSet, addEv, addFw)
+	if len(cmsVersions) > 0 {
+		d.FrameworkVersions = cmsVersions
+	}
+
 	// --- Finalise -----------------------------------------------------------
 	if d.Confidence > 100 {
 		d.Confidence = 100
@@ -145,8 +162,16 @@ func Analyze(in Input) *Detection {
 	sortEvidence(d.Evidence)
 
 	if in.Deep && d.IsPHP {
-		d.EndOfLife, d.EOLDetail = evaluateEOL(d.Variant, d.Version)
-		d.Vulnerabilities = CorrelateVulns(d.Variant, d.Version)
+		cat := in.Catalog
+		if cat == nil {
+			cat = DefaultCatalog()
+		}
+		d.EndOfLife, d.EOLDetail = cat.EOL(d.Variant, d.Version)
+		d.Vulnerabilities = cat.CorrelatePHP(d.Variant, d.Version)
+		for fw, ver := range d.FrameworkVersions {
+			d.Vulnerabilities = append(d.Vulnerabilities, cat.CorrelateCMS(fw, ver)...)
+		}
+		sortVulns(d.Vulnerabilities)
 	}
 
 	return d
@@ -356,5 +381,15 @@ func sortEvidence(ev []Evidence) {
 			return ev[i].Weight > ev[j].Weight
 		}
 		return ev[i].Signal < ev[j].Signal
+	})
+}
+
+func sortVulns(vs []Vulnerability) {
+	sort.SliceStable(vs, func(i, j int) bool {
+		ri, rj := SeverityRank(vs[i].Severity), SeverityRank(vs[j].Severity)
+		if ri != rj {
+			return ri > rj
+		}
+		return vs[i].ID > vs[j].ID
 	})
 }

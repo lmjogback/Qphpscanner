@@ -74,6 +74,15 @@ type Fetcher struct {
 	maxBody      int64
 	follow       bool
 	maxRedirects int
+	headers      map[string]string
+	cookie       string
+	bearer       string
+	basicUser    string
+	basicPass    string
+	hostHeader   string
+	retries      int
+	retryBackoff time.Duration
+	limiter      Limiter
 }
 
 // FetcherConfig configures a Fetcher.
@@ -84,6 +93,29 @@ type FetcherConfig struct {
 	UserAgent       string
 	MaxBodyBytes    int64
 	MaxRedirects    int
+
+	// Headers are extra request headers applied to every request (they
+	// override the defaults but not the per-request auth/cookie below).
+	Headers map[string]string
+	// Cookie is a raw Cookie header value.
+	Cookie string
+	// BearerToken sets "Authorization: Bearer <token>".
+	BearerToken string
+	// BasicUser/BasicPass set HTTP Basic auth.
+	BasicUser string
+	BasicPass string
+	// HostHeader overrides the Host header on the initial request (vhost
+	// scanning); it is not carried across redirects to other hosts.
+	HostHeader string
+	// ProxyURL routes requests through an http(s):// or socks5(h):// proxy.
+	// Empty uses the environment proxy settings.
+	ProxyURL string
+	// Retries is the number of extra attempts on a transient network error.
+	Retries int
+	// RetryBackoff is the base backoff between retries (doubled each attempt).
+	RetryBackoff time.Duration
+	// Limiter, when set, gates every outbound request (global rate limiting).
+	Limiter Limiter
 }
 
 // NewFetcher builds a Fetcher. The underlying transport never follows
@@ -102,13 +134,14 @@ func NewFetcher(cfg FetcherConfig) *Fetcher {
 	if cfg.MaxRedirects <= 0 {
 		cfg.MaxRedirects = 10
 	}
+	if cfg.RetryBackoff <= 0 {
+		cfg.RetryBackoff = 300 * time.Millisecond
+	}
 
+	baseDialer := &net.Dialer{Timeout: cfg.Timeout, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   cfg.Timeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		Proxy:       http.ProxyFromEnvironment,
+		DialContext: baseDialer.DialContext,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: cfg.Insecure, //nolint:gosec // opt-in for self-signed scan targets
 			MinVersion:         tls.VersionTLS10,
@@ -119,6 +152,15 @@ func NewFetcher(cfg FetcherConfig) *Fetcher {
 		MaxIdleConns:          100,
 		IdleConnTimeout:       30 * time.Second,
 		DisableCompression:    false,
+	}
+	if cfg.ProxyURL != "" {
+		if err := applyProxy(transport, baseDialer, cfg.ProxyURL); err != nil {
+			// Fall back to a resolver that errors on use, so the misconfig is
+			// visible per-request rather than panicking at construction.
+			transport.DialContext = func(_ context.Context, _, _ string) (net.Conn, error) {
+				return nil, err
+			}
+		}
 	}
 
 	return &Fetcher{
@@ -134,13 +176,70 @@ func NewFetcher(cfg FetcherConfig) *Fetcher {
 		maxBody:      cfg.MaxBodyBytes,
 		follow:       cfg.FollowRedirects,
 		maxRedirects: cfg.MaxRedirects,
+		headers:      cfg.Headers,
+		cookie:       cfg.Cookie,
+		bearer:       cfg.BearerToken,
+		basicUser:    cfg.BasicUser,
+		basicPass:    cfg.BasicPass,
+		hostHeader:   cfg.HostHeader,
+		retries:      cfg.Retries,
+		retryBackoff: cfg.RetryBackoff,
+		limiter:      cfg.Limiter,
+	}
+}
+
+// applyProxy configures the transport for an http(s) or socks5 proxy.
+func applyProxy(t *http.Transport, base *net.Dialer, proxyURL string) error {
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		t.Proxy = func(*http.Request) (*url.URL, error) { return u, nil }
+		return nil
+	case "socks5", "socks5h":
+		d := &socks5Dialer{proxyAddr: u.Host, base: base}
+		if u.User != nil {
+			d.user = u.User.Username()
+			d.pass, _ = u.User.Password()
+		}
+		t.DialContext = d.DialContext
+		// A SOCKS proxy supersedes any environment HTTP proxy.
+		t.Proxy = nil
+		return nil
+	default:
+		return fmt.Errorf("unsupported proxy scheme %q (want http, https or socks5)", u.Scheme)
 	}
 }
 
 // Get fetches rawURL, following redirects (when enabled) up to the configured
-// limit and aggregating evidence across hops.
+// limit and aggregating evidence across hops. Transient network failures are
+// retried up to the configured retry count with exponential backoff.
 func (f *Fetcher) Get(ctx context.Context, rawURL string) *Response {
-	return f.do(ctx, http.MethodGet, rawURL)
+	var out *Response
+	for attempt := 0; ; attempt++ {
+		out = f.do(ctx, http.MethodGet, rawURL)
+		if out.Err == "" || !transientErr(out.Err) || attempt >= f.retries {
+			return out
+		}
+		backoff := f.retryBackoff << attempt
+		select {
+		case <-ctx.Done():
+			return out
+		case <-time.After(backoff):
+		}
+	}
+}
+
+func transientErr(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, s := range []string{"timeout", "timed out", "connection refused", "connection reset", "reset by peer", "eof", "no route to host", "temporarily", "broken pipe", "i/o timeout"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Fetcher) do(ctx context.Context, method, rawURL string) *Response {
@@ -160,6 +259,31 @@ func (f *Fetcher) do(ctx context.Context, method, rawURL string) *Response {
 		req.Header.Set("User-Agent", f.userAgent)
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("Accept-Encoding", "identity")
+		for k, v := range f.headers {
+			req.Header.Set(k, v)
+		}
+		if f.cookie != "" {
+			req.Header.Set("Cookie", f.cookie)
+		}
+		if f.bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+f.bearer)
+		}
+		if f.basicUser != "" || f.basicPass != "" {
+			req.SetBasicAuth(f.basicUser, f.basicPass)
+		}
+		// Host override applies only to the initial request, not to any host
+		// a redirect sends us to.
+		if f.hostHeader != "" && hop == 0 {
+			req.Host = f.hostHeader
+		}
+
+		if f.limiter != nil {
+			if err := f.limiter.Wait(ctx); err != nil {
+				out.Err = cleanErr(err)
+				out.Elapsed = time.Since(start)
+				return out
+			}
+		}
 
 		resp, err := f.client.Do(req)
 		if err != nil {

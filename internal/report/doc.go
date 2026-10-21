@@ -86,6 +86,12 @@ func buildDocument(res *scanner.ScanResult) *document {
 		if len(t.Inputs) > 0 {
 			d.kv("From targets", strings.Join(sortedCopy(t.Inputs), ", "))
 		}
+		if len(t.Addresses) > 0 {
+			d.kv("Addresses", strings.Join(t.Addresses, ", "))
+		}
+		if len(t.PTR) > 0 {
+			d.kv("Reverse DNS", strings.Join(t.PTR, ", "))
+		}
 		d.spacer()
 		for _, svc := range t.Services {
 			renderService(d, svc)
@@ -105,6 +111,10 @@ func renderService(d *document, svc scanner.ServiceResult) {
 		}
 		d.spacer()
 		return
+	}
+
+	if svc.Banner != "" {
+		d.kv("Banner", svc.Banner)
 	}
 
 	if svc.HTTP == nil {
@@ -165,6 +175,12 @@ func renderPHP(d *document, det *php.Detection) {
 	}
 	if len(det.Frameworks) > 0 {
 		d.kv("Frameworks", strings.Join(det.Frameworks, ", "))
+	}
+	for _, fw := range sortedKeys(det.FrameworkVersions) {
+		d.kv("  "+fw+" version", det.FrameworkVersions[fw])
+	}
+	if det.FaviconHash != "" {
+		d.kv("Favicon hash", det.FaviconHash+" (mmh3)")
 	}
 	if len(det.Extensions) > 0 {
 		d.kv("Extensions", strings.Join(det.Extensions, ", "))
@@ -254,6 +270,15 @@ func intsToString(xs []int) string {
 
 func sortedCopy(in []string) []string {
 	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
 	sort.Strings(out)
 	return out
 }

@@ -4,8 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
+
+// stringSlice is a repeatable string flag.
+type stringSlice []string
+
+func (s *stringSlice) String() string { return strings.Join(*s, ",") }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
 
 // flags holds the parsed command-line flag values.
 type flags struct {
@@ -31,6 +41,35 @@ type flags struct {
 	verbose       bool
 	quiet         bool
 	noDNSEnum     bool
+
+	// politeness
+	rate    float64
+	perHost int
+	jitter  time.Duration
+	retries int
+
+	// enrichment
+	resolveDNS bool
+	banners    bool
+
+	// http shaping
+	headers   stringSlice
+	cookie    string
+	bearer    string
+	basicAuth string
+	vhost     string
+	proxy     string
+
+	// data / resume / reporting extras
+	vulnFeeds        stringSlice
+	failOn           string
+	outAll           string
+	diffPath         string
+	diffFormat       string
+	resume           string
+	verifySubdomains bool
+	targetsFile      string
+	webAuth          string
 }
 
 func newFlagSet() *flag.FlagSet {
@@ -93,6 +132,37 @@ func bindFlags(fs *flag.FlagSet) *flags {
 	fs.BoolVar(&f.quiet, "quiet", false, "suppress progress output")
 	fs.BoolVar(&f.quiet, "q", false, "shorthand for --quiet")
 	fs.BoolVar(&f.noDNSEnum, "no-dns-enum", false, "disable '*.domain' subdomain enumeration")
+	fs.BoolVar(&f.verifySubdomains, "verify-subdomains", false, "keep only enumerated subdomains that resolve in DNS")
+
+	fs.StringVar(&f.targetsFile, "targets-file", "", "read targets from a file, one per line ('-' for stdin)")
+	fs.StringVar(&f.targetsFile, "iL", "", "shorthand for --targets-file")
+
+	// Politeness.
+	fs.Float64Var(&f.rate, "rate", 0, "max outbound HTTP requests per second (0 = unlimited)")
+	fs.IntVar(&f.perHost, "per-host-concurrency", 0, "max concurrent probes per host (0 = unlimited)")
+	fs.DurationVar(&f.jitter, "jitter", 0, "random delay up to this before each service probe")
+	fs.IntVar(&f.retries, "retries", 0, "extra attempts on a transient network error")
+
+	// Enrichment.
+	fs.BoolVar(&f.resolveDNS, "resolve-dns", false, "add forward and reverse DNS for each host")
+	fs.BoolVar(&f.banners, "banners", false, "grab a service banner from open non-HTTP ports")
+
+	// HTTP request shaping.
+	fs.Var(&f.headers, "header", "extra request header 'Name: value' (repeatable)")
+	fs.StringVar(&f.cookie, "cookie", "", "Cookie header value for authenticated scans")
+	fs.StringVar(&f.bearer, "bearer", "", "Bearer token (sets Authorization: Bearer ...)")
+	fs.StringVar(&f.basicAuth, "basic", "", "HTTP Basic auth as user:pass")
+	fs.StringVar(&f.vhost, "vhost", "", "override the Host header (virtual-host scanning)")
+	fs.StringVar(&f.proxy, "proxy", "", "route requests via an http(s):// or socks5:// proxy")
+
+	// Vulnerability data / resume / reporting extras.
+	fs.Var(&f.vulnFeeds, "vuln-feed", "external vulnerability feed file or URL (repeatable)")
+	fs.StringVar(&f.failOn, "fail-on", "", "exit non-zero if a finding meets this severity: low|medium|high|critical|eol")
+	fs.StringVar(&f.outAll, "oA", "", "write json/xml/csv/sarif/txt outputs and an HTML report to <base>.*")
+	fs.StringVar(&f.diffPath, "diff", "", "compare against a prior JSON scan result and print the differences")
+	fs.StringVar(&f.diffFormat, "diff-format", "text", "diff output format: text or json")
+	fs.StringVar(&f.resume, "resume", "", "checkpoint file: record completed services and resume from it")
+	fs.StringVar(&f.webAuth, "web-auth", "", "protect the web GUI with HTTP Basic auth (user:pass)")
 
 	fs.SetOutput(os.Stderr)
 	return f

@@ -46,9 +46,11 @@ type Summary struct {
 
 // TargetResult groups all services discovered on one host.
 type TargetResult struct {
-	Host     string          `json:"host" xml:"host,attr"`
-	Inputs   []string        `json:"inputs,omitempty" xml:"inputs>input,omitempty"`
-	Services []ServiceResult `json:"services" xml:"services>service"`
+	Host      string          `json:"host" xml:"host,attr"`
+	Inputs    []string        `json:"inputs,omitempty" xml:"inputs>input,omitempty"`
+	Addresses []string        `json:"addresses,omitempty" xml:"addresses>address,omitempty"`
+	PTR       []string        `json:"ptr,omitempty" xml:"ptr>name,omitempty"`
+	Services  []ServiceResult `json:"services" xml:"services>service"`
 }
 
 // ServiceResult is the assessment of one host:port endpoint.
@@ -60,6 +62,7 @@ type ServiceResult struct {
 	URL         string                   `json:"url" xml:"url"`
 	PortOpen    bool                     `json:"port_open" xml:"port_open"`
 	Error       string                   `json:"error,omitempty" xml:"error,omitempty"`
+	Banner      string                   `json:"banner,omitempty" xml:"banner,omitempty"`
 	HTTP        *HTTPInfo                `json:"http,omitempty" xml:"http,omitempty"`
 	PHP         *php.Detection           `json:"php,omitempty" xml:"php,omitempty"`
 	SecurityTxt *securitytxt.SecurityTxt `json:"security_txt,omitempty" xml:"security_txt,omitempty"`

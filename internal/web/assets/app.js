@@ -2,13 +2,15 @@
 
 // qphpscanner web UI. All scan-derived text is inserted with textContent to
 // avoid injecting attacker-controlled response data into the DOM. The scan
-// endpoint streams NDJSON (one progress event per line, then a result line).
+// endpoint streams NDJSON (progress events then a result line); scan history is
+// served by the backend and rendered below the current result.
 
 const $ = (id) => document.getElementById(id);
 
 const form = $("scan-form");
 const statusEl = $("status");
 const scanBtn = $("scan-btn");
+const cancelBtn = $("cancel-btn");
 const summaryEl = $("summary");
 const resultsEl = $("results");
 const downloadsEl = $("downloads");
@@ -19,13 +21,17 @@ const progressLog = $("progress-log");
 const historyWrap = $("history-wrap");
 const historyEl = $("history");
 
-let currentResult = null;
-const scanHistory = [];
+let controller = null;
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   await runScan();
 });
+cancelBtn.addEventListener("click", () => {
+  if (controller) controller.abort();
+});
+
+document.addEventListener("DOMContentLoaded", refreshHistory);
 
 async function runScan() {
   const targets = $("targets").value;
@@ -48,6 +54,7 @@ async function runScan() {
   };
 
   scanBtn.disabled = true;
+  cancelBtn.classList.remove("hidden");
   setStatus("");
   resultsEl.replaceChildren();
   summaryEl.replaceChildren();
@@ -58,14 +65,15 @@ async function runScan() {
   let phpCount = 0;
   let errMsg = null;
   let result = null;
+  controller = new AbortController();
 
   try {
     const resp = await fetch("/api/scan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
-
     if (!resp.ok) {
       let data = {};
       try { data = await resp.json(); } catch (_) { /* ignore */ }
@@ -116,24 +124,22 @@ async function runScan() {
     if (errMsg) throw new Error(errMsg);
     if (!result) throw new Error("scan ended without a result");
 
-    onResult(result);
+    render(result);
     setStatus(`Done in ${result.meta.duration_ms} ms · ${result.summary.hosts_scanned} host(s).`);
     downloadsEl.classList.remove("hidden");
+    refreshHistory();
   } catch (err) {
-    setStatus("Error: " + err.message, true);
+    if (err.name === "AbortError") {
+      setStatus("Scan cancelled.");
+    } else {
+      setStatus("Error: " + err.message, true);
+    }
   } finally {
     scanBtn.disabled = false;
+    cancelBtn.classList.add("hidden");
+    controller = null;
     finishProgress();
   }
-}
-
-function onResult(result) {
-  if (currentResult) {
-    scanHistory.unshift(currentResult);
-    renderHistory();
-  }
-  currentResult = result;
-  render(result);
 }
 
 /* ---------- progress ---------- */
@@ -153,7 +159,6 @@ function updateProgress(ev, openCount, phpCount) {
 }
 
 function finishProgress() {
-  // Leave the final state visible briefly, then hide the bar.
   setTimeout(() => progressEl.classList.add("hidden"), 600);
 }
 
@@ -208,6 +213,12 @@ function renderSummary(s) {
 function renderHost(t) {
   const group = el("div", "host-group");
   group.appendChild(el("h3", null, t.host));
+  if ((t.addresses && t.addresses.length) || (t.ptr && t.ptr.length)) {
+    const dns = el("div", "host-dns");
+    if (t.addresses && t.addresses.length) dns.textContent = "addr: " + t.addresses.join(", ");
+    if (t.ptr && t.ptr.length) dns.textContent += (dns.textContent ? " · " : "") + "ptr: " + t.ptr.join(", ");
+    group.appendChild(dns);
+  }
   for (const svc of t.services || []) {
     group.appendChild(renderService(svc));
   }
@@ -241,6 +252,8 @@ function renderService(svc) {
     return card;
   }
 
+  if (svc.banner) add("Banner", svc.banner);
+
   const h = svc.http;
   if (h) {
     add("Status", h.status + (h.proto ? " " + h.proto : ""));
@@ -258,6 +271,10 @@ function renderService(svc) {
   if (php) {
     if (php.variant) add("Variant", php.variant);
     if (php.version) add("Version", php.version + (php.version_source ? " (via " + php.version_source + ")" : ""));
+    if (php.framework_versions) {
+      for (const fw of Object.keys(php.framework_versions)) add(fw + " version", php.framework_versions[fw]);
+    }
+    if (php.favicon_hash) add("Favicon hash", php.favicon_hash + " (mmh3)");
     if (php.eol_detail) {
       kv.appendChild(el("dt", null, "Lifecycle"));
       const dd = el("dd", null, php.eol_detail);
@@ -346,43 +363,70 @@ function renderSecurityTxt(st) {
   add("Policy", st.policy);
   add("Encryption", st.encryption);
   add("Languages", st.preferred_languages);
-  add("Acknowledgments", st.acknowledgments);
-  add("Hiring", st.hiring);
   box.appendChild(kv);
   return box;
 }
 
-/* ---------- history ---------- */
+/* ---------- history (server-backed) ---------- */
 
-function renderHistory() {
+async function refreshHistory() {
+  try {
+    const resp = await fetch("/api/history");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const scans = data.scans || [];
+    renderHistory(scans.slice(1)); // newest is shown as the current result
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function renderHistory(scans) {
   historyEl.replaceChildren();
-  if (scanHistory.length === 0) {
+  if (!scans.length) {
     historyWrap.classList.add("hidden");
     return;
   }
   historyWrap.classList.remove("hidden");
-  scanHistory.forEach((result, i) => {
-    historyEl.appendChild(renderHistoryEntry(result, scanHistory.length - i));
-  });
+  for (const scan of scans) {
+    historyEl.appendChild(renderHistoryEntry(scan));
+  }
 }
 
-function renderHistoryEntry(result, n) {
+function renderHistoryEntry(scan) {
   const d = el("details", "history-entry");
-  const s = result.summary;
-  const when = formatTime(result.meta.started_at);
-  const hosts = (result.targets || []).map((t) => t.host);
-  const label = hosts.slice(0, 3).join(", ") + (hosts.length > 3 ? ` +${hosts.length - 3} more` : "");
-  const summary = el("summary", null,
-    `#${n} · ${when} · ${s.hosts_scanned} host(s) · PHP ${s.php_confirmed + s.php_likely} · vulns ${s.vulnerabilities}`);
-  d.appendChild(summary);
-  if (label) d.appendChild(el("div", "history-targets", label || "—"));
-  const body = el("div", "history-body");
-  const targets = result.targets || [];
-  if (targets.length === 0) {
-    body.appendChild(el("p", "empty", "No open services found."));
-  } else {
-    for (const t of targets) body.appendChild(renderHost(t));
+  const s = scan.summary;
+  const when = formatTime(scan.at);
+  const label = (scan.hosts || []).slice(0, 3).join(", ") +
+    ((scan.hosts || []).length > 3 ? ` +${scan.hosts.length - 3} more` : "");
+  d.appendChild(el("summary", null,
+    `${when} · ${scan.mode} · ${s.hosts_scanned} host(s) · PHP ${s.php_confirmed + s.php_likely} · vulns ${s.vulnerabilities}`));
+  if (label) d.appendChild(el("div", "history-targets", label));
+
+  const dl = el("div", "downloads");
+  dl.appendChild(el("span", null, "Download:"));
+  for (const fmt of ["json", "csv", "sarif", "html", "pdf"]) {
+    const a = el("a", null, fmt.toUpperCase());
+    a.href = `/api/download?scan=${encodeURIComponent(scan.id)}&format=${fmt}`;
+    dl.appendChild(a);
   }
+  d.appendChild(dl);
+
+  const body = el("div", "history-body");
+  let loaded = false;
+  d.addEventListener("toggle", async () => {
+    if (!d.open || loaded) return;
+    loaded = true;
+    try {
+      const resp = await fetch(`/api/download?scan=${encodeURIComponent(scan.id)}&format=json`);
+      const result = await resp.json();
+      body.replaceChildren();
+      for (const t of result.targets || []) body.appendChild(renderHost(t));
+      if (!(result.targets || []).length) body.appendChild(el("p", "empty", "No open services found."));
+    } catch (_) {
+      body.appendChild(el("p", "error", "Could not load scan details."));
+    }
+  });
   d.appendChild(body);
   return d;
 }
@@ -390,7 +434,7 @@ function renderHistoryEntry(result, n) {
 function formatTime(iso) {
   const dt = new Date(iso);
   if (isNaN(dt.getTime())) return iso;
-  return dt.toLocaleTimeString();
+  return dt.toLocaleString();
 }
 
 /* ---------- helpers ---------- */

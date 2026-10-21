@@ -1,0 +1,39 @@
+{
+  "schema": "qphpscanner-vuln-feed/1",
+  "generated": "2026-01-01",
+
+  "_comment": "External vulnerability feed for qphpscanner. Load with --vuln-feed <file-or-url> (repeatable). Entries are MERGED on top of the built-in catalogue; EOL dates override by branch. A version matches an entry when ANY of its 'affected' ranges match. Within a range, every populated bound must hold: 'branch' pins a major.minor; 'introduced' is an inclusive lower bound; 'fixed'/'lt' are exclusive upper bounds.",
+
+  "php": [
+    {
+      "id": "CVE-2025-XXXXX",
+      "severity": "critical",
+      "title": "Example PHP core issue",
+      "description": "A longer description of the issue.",
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2025-XXXXX",
+      "note": "only relevant to a specific SAPI/config",
+      "affected": [
+        { "branch": "8.2", "lt": "8.2.99" },
+        { "branch": "8.3", "lt": "8.3.99" },
+        { "lt": "8.2.0" }
+      ]
+    }
+  ],
+
+  "cms": {
+    "wordpress": [
+      {
+        "id": "CVE-2025-YYYYY",
+        "severity": "high",
+        "title": "Example WordPress core issue",
+        "reference": "https://nvd.nist.gov/vuln/detail/CVE-2025-YYYYY",
+        "affected": [{ "introduced": "6.0", "fixed": "6.6.1" }]
+      }
+    ]
+  },
+
+  "eol": {
+    "8.1": "2025-12-31",
+    "8.2": "2026-12-31"
+  }
+}

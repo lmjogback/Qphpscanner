@@ -1,180 +1,410 @@
 package php
 
-// vulnEntry is one known issue plus a predicate over a parsed version.
-type vulnEntry struct {
-	ID          string
-	Severity    string
-	Title       string
-	Affected    string
-	Description string
-	Reference   string
-	Note        string // appended to MatchBasis when set
-	match       func(maj, min, pat int) bool
-}
+// Built-in, curated vulnerability data. This is a non-exhaustive catalogue of
+// high-signal, version-correlatable issues. Matches are informational leads
+// derived from a detected version — not confirmed, exploited findings. Extend
+// or override it at runtime with external feeds (see catalog.go / --vuln-feed).
 
-// lessThan reports whether (maj.min.pat) < (a.b.c).
-func lessThan(a, b, c int) func(maj, min, pat int) bool {
-	return func(maj, min, pat int) bool {
-		if maj != a {
-			return maj < a
-		}
-		if min != b {
-			return min < b
-		}
-		return pat < c
-	}
-}
+// br is an affected range limited to a major.minor branch, below `lt`.
+func br(branch, lt string) RangeSpec { return RangeSpec{Branch: branch, LessThan: lt} }
 
-// inBranchBelow reports whether the version is in branch a.b and its patch is
-// below fix (i.e. a.b.x with x < fix).
-func inBranchBelow(a, b, fix int) func(maj, min, pat int) bool {
-	return func(maj, min, pat int) bool {
-		return maj == a && min == b && pat < fix
-	}
-}
+// lo is an open-ended "less than" range across all branches.
+func lo(v string) RangeSpec { return RangeSpec{LessThan: v} }
 
-func anyOf(fns ...func(int, int, int) bool) func(int, int, int) bool {
-	return func(maj, min, pat int) bool {
-		for _, f := range fns {
-			if f(maj, min, pat) {
-				return true
-			}
-		}
-		return false
-	}
-}
+// rng is a half-open [introduced, fixed) range.
+func rng(introduced, fixed string) RangeSpec { return RangeSpec{Introduced: introduced, Fixed: fixed} }
 
-// vulnDB is a curated, non-exhaustive catalogue of high-signal, version-
-// correlatable PHP CVEs. Matches are informational leads derived purely from a
-// detected version string — not confirmed, exploited findings.
-var vulnDB = []vulnEntry{
+const nvd = "https://nvd.nist.gov/vuln/detail/"
+
+// builtinPHP is the curated PHP-core CVE catalogue.
+var builtinPHP = []FeedEntry{
+	// ---- 8.1 / 8.2 / 8.3 era ----
 	{
 		ID: "CVE-2024-4577", Severity: "critical",
-		Title:    "PHP-CGI argument injection (regression of CVE-2012-1823)",
-		Affected: "< 8.1.29, < 8.2.20, < 8.3.8 (Windows PHP-CGI; best-fit codepages)",
-		Description: "Argument injection in php-cgi on Windows allows passing options to the PHP " +
-			"interpreter, leading to source disclosure or remote code execution.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2024-4577",
-		Note:      "Windows php-cgi deployments only",
-		match: anyOf(
-			inBranchBelow(8, 1, 29), inBranchBelow(8, 2, 20), inBranchBelow(8, 3, 8),
-			lessThan(8, 1, 0),
-		),
+		Title:       "PHP-CGI argument injection (regression of CVE-2012-1823)",
+		Description: "Argument injection in php-cgi on Windows allows passing options to the PHP interpreter, leading to source disclosure or remote code execution. Exploited in the wild.",
+		Reference:   nvd + "CVE-2024-4577", Note: "Windows php-cgi deployments only",
+		Affected: []RangeSpec{br("8.1", "8.1.29"), br("8.2", "8.2.20"), br("8.3", "8.3.8"), lo("8.1.0")},
 	},
 	{
-		ID: "CVE-2024-1874", Severity: "high",
-		Title:    "proc_open() command injection via bat/cmd on Windows",
-		Affected: "< 8.1.28, < 8.2.18, < 8.3.6",
-		Description: "Arguments to proc_open() with bat/cmd wrappers on Windows can inject commands " +
-			"when the program name is quoted.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2024-1874",
-		Note:      "Windows only",
-		match:     anyOf(inBranchBelow(8, 1, 28), inBranchBelow(8, 2, 18), inBranchBelow(8, 3, 6)),
+		ID: "CVE-2024-11236", Severity: "critical",
+		Title:       "Integer overflow in pdo_firebird / pgsql leading to memory corruption",
+		Description: "An integer overflow when handling oversized values in the firebird/pgsql drivers can corrupt memory.",
+		Reference:   nvd + "CVE-2024-11236",
+		Affected:    []RangeSpec{br("8.1", "8.1.31"), br("8.2", "8.2.26"), br("8.3", "8.3.14")},
+	},
+	{
+		ID: "CVE-2024-11233", Severity: "high",
+		Title:       "convert.quoted-printable-decode buffer overread",
+		Description: "A single-byte out-of-bounds read in the quoted-printable stream filter.",
+		Reference:   nvd + "CVE-2024-11233",
+		Affected:    []RangeSpec{br("8.1", "8.1.31"), br("8.2", "8.2.26"), br("8.3", "8.3.14")},
+	},
+	{
+		ID: "CVE-2024-11234", Severity: "medium",
+		Title:       "Stream proxy request CRLF injection via configuration",
+		Description: "A CRLF injection in the HTTP stream wrapper when a request_fulluri proxy is configured.",
+		Reference:   nvd + "CVE-2024-11234",
+		Affected:    []RangeSpec{br("8.1", "8.1.31"), br("8.2", "8.2.26"), br("8.3", "8.3.14")},
+	},
+	{
+		ID: "CVE-2024-8925", Severity: "medium",
+		Title:       "Erroneous parsing of multipart/form-data boundaries",
+		Description: "Malformed multipart boundaries can cause some POST parameters to be dropped.",
+		Reference:   nvd + "CVE-2024-8925",
+		Affected:    []RangeSpec{br("8.1", "8.1.30"), br("8.2", "8.2.24"), br("8.3", "8.3.12")},
+	},
+	{
+		ID: "CVE-2024-8927", Severity: "low",
+		Title:       "cgi.force_redirect bypass via HTTP_PROXY-style env",
+		Description: "A configuration bypass in the CGI SAPI env handling.",
+		Reference:   nvd + "CVE-2024-8927",
+		Affected:    []RangeSpec{br("8.1", "8.1.30"), br("8.2", "8.2.24"), br("8.3", "8.3.12")},
+	},
+	{
+		ID: "CVE-2024-9026", Severity: "low",
+		Title:       "PHP-FPM log manipulation via unsanitised output",
+		Description: "Unsanitised bytes written to FPM logs can hide or forge log lines.",
+		Reference:   nvd + "CVE-2024-9026",
+		Affected:    []RangeSpec{br("8.1", "8.1.30"), br("8.2", "8.2.24"), br("8.3", "8.3.12")},
+	},
+	{
+		ID: "CVE-2024-5458", Severity: "medium",
+		Title:       "filter_var FILTER_VALIDATE_URL path parsing inconsistency",
+		Description: "A parsing inconsistency may let malformed URLs pass validation.",
+		Reference:   nvd + "CVE-2024-5458",
+		Affected:    []RangeSpec{br("8.1", "8.1.29"), br("8.2", "8.2.20"), br("8.3", "8.3.8")},
+	},
+	{
+		ID: "CVE-2024-2756", Severity: "medium",
+		Title:       "__Host-/__Secure- cookie prefix bypass",
+		Description: "A flaw in cookie handling can let an attacker spoof security-prefixed cookies.",
+		Reference:   nvd + "CVE-2024-2756",
+		Affected:    []RangeSpec{br("8.1", "8.1.28"), br("8.2", "8.2.18"), br("8.3", "8.3.6")},
 	},
 	{
 		ID: "CVE-2024-3096", Severity: "medium",
-		Title:    "password_verify() accepts strings with null bytes",
-		Affected: "< 8.1.28, < 8.2.18, < 8.3.6",
-		Description: "A password string with a leading null byte may be erroneously verified against " +
-			"certain BCrypt hashes.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2024-3096",
-		match:     anyOf(inBranchBelow(8, 1, 28), inBranchBelow(8, 2, 18), inBranchBelow(8, 3, 6)),
+		Title:       "password_verify() accepts strings with a leading null byte",
+		Description: "A password beginning with a null byte may be erroneously verified against some BCrypt hashes.",
+		Reference:   nvd + "CVE-2024-3096",
+		Affected:    []RangeSpec{br("8.1", "8.1.28"), br("8.2", "8.2.18"), br("8.3", "8.3.6")},
 	},
 	{
+		ID: "CVE-2024-1874", Severity: "high",
+		Title:       "proc_open() command injection via bat/cmd on Windows",
+		Description: "Quoted program names with bat/cmd wrappers on Windows can inject commands.",
+		Reference:   nvd + "CVE-2024-1874", Note: "Windows only",
+		Affected: []RangeSpec{br("8.1", "8.1.28"), br("8.2", "8.2.18"), br("8.3", "8.3.6")},
+	},
+
+	// ---- 8.0 / 8.1 / 8.2 era ----
+	{
 		ID: "CVE-2023-3824", Severity: "critical",
-		Title:    "Buffer overflow in phar directory parsing",
-		Affected: "< 8.0.30, < 8.1.22, < 8.2.8",
-		Description: "A length-check error while loading phar files can cause a stack buffer overflow " +
-			"leading to memory corruption or RCE.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2023-3824",
-		match:     anyOf(inBranchBelow(8, 0, 30), inBranchBelow(8, 1, 22), inBranchBelow(8, 2, 8)),
+		Title:       "Buffer overflow in phar directory parsing",
+		Description: "A length-check error while loading phar files can cause a stack buffer overflow leading to memory corruption or RCE.",
+		Reference:   nvd + "CVE-2023-3824",
+		Affected:    []RangeSpec{br("8.0", "8.0.30"), br("8.1", "8.1.22"), br("8.2", "8.2.8")},
+	},
+	{
+		ID: "CVE-2023-3823", Severity: "high",
+		Title:       "XML external entity / information disclosure via libxml globals",
+		Description: "Shared libxml global state can re-enable external entity loading, exposing local files.",
+		Reference:   nvd + "CVE-2023-3823",
+		Affected:    []RangeSpec{br("8.0", "8.0.30"), br("8.1", "8.1.22"), br("8.2", "8.2.8")},
+	},
+	{
+		ID: "CVE-2023-0662", Severity: "high",
+		Title:       "Denial of service via excessive HTTP file-upload parts",
+		Description: "No limit on the number of parts in multipart requests enables resource exhaustion.",
+		Reference:   nvd + "CVE-2023-0662",
+		Affected:    []RangeSpec{br("8.0", "8.0.28"), br("8.1", "8.1.16"), br("8.2", "8.2.3")},
 	},
 	{
 		ID: "CVE-2023-0568", Severity: "medium",
 		Title:       "Core path-resolution one-byte buffer overread",
-		Affected:    "< 8.0.28, < 8.1.16, < 8.2.3",
 		Description: "A one-byte out-of-bounds read in the path-resolution code.",
-		Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2023-0568",
-		match:       anyOf(inBranchBelow(8, 0, 28), inBranchBelow(8, 1, 16), inBranchBelow(8, 2, 3)),
+		Reference:   nvd + "CVE-2023-0568",
+		Affected:    []RangeSpec{br("8.0", "8.0.28"), br("8.1", "8.1.16"), br("8.2", "8.2.3")},
 	},
 	{
+		ID: "CVE-2023-0567", Severity: "medium",
+		Title:       "password_verify() mishandles certain malformed BCrypt hashes",
+		Description: "Some invalid BCrypt hashes are treated as valid, weakening verification.",
+		Reference:   nvd + "CVE-2023-0567",
+		Affected:    []RangeSpec{br("8.0", "8.0.28"), br("8.1", "8.1.16"), br("8.2", "8.2.3")},
+	},
+
+	// ---- 7.4 / 8.0 / 8.1 era ----
+	{
 		ID: "CVE-2022-31626", Severity: "critical",
-		Title:    "pdo_mysql buffer overflow (RCE)",
-		Affected: "< 7.4.30, < 8.0.20, < 8.1.7",
-		Description: "A buffer overflow in the pdo_mysql extension with an untrusted/malicious MySQL " +
-			"server can lead to remote code execution.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2022-31626",
-		match:     anyOf(inBranchBelow(7, 4, 30), inBranchBelow(8, 0, 20), inBranchBelow(8, 1, 7)),
+		Title:       "pdo_mysql buffer overflow (RCE)",
+		Description: "A buffer overflow in pdo_mysql with an untrusted/malicious MySQL server can lead to remote code execution.",
+		Reference:   nvd + "CVE-2022-31626",
+		Affected:    []RangeSpec{br("7.4", "7.4.30"), br("8.0", "8.0.20"), br("8.1", "8.1.7")},
 	},
 	{
 		ID: "CVE-2022-31625", Severity: "high",
-		Title:    "pgsql/pdo_pgsql memory corruption via parameter arrays",
-		Affected: "< 7.4.30, < 8.0.20, < 8.1.7",
-		Description: "Improper handling of parameter arrays in the pgsql/pdo_pgsql extensions can cause " +
-			"memory corruption.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2022-31625",
-		match:     anyOf(inBranchBelow(7, 4, 30), inBranchBelow(8, 0, 20), inBranchBelow(8, 1, 7)),
+		Title:       "pgsql/pdo_pgsql memory corruption via parameter arrays",
+		Description: "Improper handling of parameter arrays in the pgsql/pdo_pgsql extensions can corrupt memory.",
+		Reference:   nvd + "CVE-2022-31625",
+		Affected:    []RangeSpec{br("7.4", "7.4.30"), br("8.0", "8.0.20"), br("8.1", "8.1.7")},
 	},
 	{
+		ID: "CVE-2022-31628", Severity: "medium",
+		Title:       "phar: infinite recursion / DoS via quines",
+		Description: "Decompressing a crafted phar quine can exhaust resources.",
+		Reference:   nvd + "CVE-2022-31628",
+		Affected:    []RangeSpec{br("7.4", "7.4.31"), br("8.0", "8.0.24"), br("8.1", "8.1.11")},
+	},
+	{
+		ID: "CVE-2022-31629", Severity: "medium",
+		Title:       "Network-related cookie-name downgrade ($_COOKIE prefix)",
+		Description: "Cookie names with a leading dot can bypass __Host-/__Secure- prefixes.",
+		Reference:   nvd + "CVE-2022-31629",
+		Affected:    []RangeSpec{br("7.4", "7.4.31"), br("8.0", "8.0.24"), br("8.1", "8.1.11")},
+	},
+	{
+		ID: "CVE-2021-21708", Severity: "high",
+		Title:       "filter_var FILTER_VALIDATE_FLOAT use-after-free",
+		Description: "A use-after-free when validating floats with leading/trailing whitespace.",
+		Reference:   nvd + "CVE-2021-21708",
+		Affected:    []RangeSpec{br("7.4", "7.4.28"), br("8.0", "8.0.16"), br("8.1", "8.1.3")},
+	},
+	{
+		ID: "CVE-2021-21707", Severity: "medium",
+		Title:       "XML: special character truncation via null byte in path",
+		Description: "simplexml/xml path handling can truncate on a null byte, confusing callers.",
+		Reference:   nvd + "CVE-2021-21707",
+		Affected:    []RangeSpec{br("7.3", "7.3.33"), br("7.4", "7.4.26"), br("8.0", "8.0.13")},
+	},
+	{
+		ID: "CVE-2021-21705", Severity: "medium",
+		Title:       "SSRF via FILTER_VALIDATE_URL accepting malformed URLs",
+		Description: "URL validation can accept URLs that later resolve differently, enabling SSRF.",
+		Reference:   nvd + "CVE-2021-21705",
+		Affected:    []RangeSpec{br("7.3", "7.3.29"), br("7.4", "7.4.21"), br("8.0", "8.0.8")},
+	},
+	{
+		ID: "CVE-2021-21702", Severity: "high",
+		Title:       "SOAP null-pointer dereference (DoS)",
+		Description: "A crafted SOAP response can crash the process.",
+		Reference:   nvd + "CVE-2021-21702",
+		Affected:    []RangeSpec{br("7.3", "7.3.27"), br("7.4", "7.4.15"), br("8.0", "8.0.2")},
+	},
+
+	// ---- 7.2 / 7.3 / 7.4 era ----
+	{
+		ID: "CVE-2020-7071", Severity: "medium",
+		Title:       "FILTER_VALIDATE_URL inconsistency with userinfo",
+		Description: "URL validation inconsistency can be abused for access-control bypass/SSRF.",
+		Reference:   nvd + "CVE-2020-7071",
+		Affected:    []RangeSpec{br("7.3", "7.3.26"), br("7.4", "7.4.14"), br("8.0", "8.0.1")},
+	},
+	{
+		ID: "CVE-2020-7070", Severity: "medium",
+		Title:       "Cookie name downgrade via $_COOKIE (prefix bypass)",
+		Description: "Crafted cookie names bypass __Host-/__Secure- prefixes.",
+		Reference:   nvd + "CVE-2020-7070",
+		Affected:    []RangeSpec{br("7.2", "7.2.34"), br("7.3", "7.3.26"), br("7.4", "7.4.14")},
+	},
+	{
+		ID: "CVE-2020-7069", Severity: "high",
+		Title:       "openssl_encrypt AES-GCM AAD authentication weakness",
+		Description: "The additional authenticated data (AAD) was not fully covered, weakening GCM integrity.",
+		Reference:   nvd + "CVE-2020-7069",
+		Affected:    []RangeSpec{br("7.2", "7.2.34"), br("7.3", "7.3.22"), br("7.4", "7.4.10")},
+	},
+	{
+		ID: "CVE-2020-7068", Severity: "medium",
+		Title:       "phar: buffer overread parsing crafted archives",
+		Description: "An out-of-bounds read when parsing malformed phar files.",
+		Reference:   nvd + "CVE-2020-7068",
+		Affected:    []RangeSpec{br("7.2", "7.2.33"), br("7.3", "7.3.21"), br("7.4", "7.4.9")},
+	},
+	{
+		ID: "CVE-2020-7067", Severity: "medium",
+		Title:       "urldecode() out-of-bounds read",
+		Description: "A buffer overread in urldecode with crafted input.",
+		Reference:   nvd + "CVE-2020-7067",
+		Affected:    []RangeSpec{br("7.2", "7.2.29"), br("7.3", "7.3.16"), br("7.4", "7.4.4")},
+	},
+	{
+		ID: "CVE-2020-7066", Severity: "low",
+		Title:       "get_headers() silently truncates on a null byte",
+		Description: "URLs with a null byte are truncated, potentially contacting an unintended host.",
+		Reference:   nvd + "CVE-2020-7066",
+		Affected:    []RangeSpec{br("7.2", "7.2.29"), br("7.3", "7.3.16"), br("7.4", "7.4.4")},
+	},
+
+	// ---- 7.1 / 7.2 / 7.3 era ----
+	{
 		ID: "CVE-2019-11043", Severity: "critical",
-		Title:    "PHP-FPM underflow RCE (env_path_info)",
-		Affected: "< 7.1.33, < 7.2.24, < 7.3.11",
-		Description: "An underflow in fpm_main.c with certain nginx + PHP-FPM configurations allows " +
-			"remote code execution (exploited in the wild).",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2019-11043",
-		Note:      "nginx + PHP-FPM with a vulnerable fastcgi_split_path_info config",
-		match:     anyOf(inBranchBelow(7, 1, 33), inBranchBelow(7, 2, 24), inBranchBelow(7, 3, 11)),
+		Title:       "PHP-FPM underflow RCE (env_path_info)",
+		Description: "An underflow in fpm_main.c with certain nginx + PHP-FPM configurations allows remote code execution. Exploited in the wild.",
+		Reference:   nvd + "CVE-2019-11043", Note: "nginx + PHP-FPM with a vulnerable fastcgi_split_path_info config",
+		Affected: []RangeSpec{br("7.1", "7.1.33"), br("7.2", "7.2.24"), br("7.3", "7.3.11")},
+	},
+	{
+		ID: "CVE-2019-11050", Severity: "medium",
+		Title:       "exif: use-after-free reading crafted images",
+		Description: "A use-after-free in exif_read_data with malformed input.",
+		Reference:   nvd + "CVE-2019-11050",
+		Affected:    []RangeSpec{br("7.2", "7.2.34"), br("7.3", "7.3.26"), br("7.4", "7.4.14")},
+	},
+	{
+		ID: "CVE-2019-11048", Severity: "low",
+		Title:       "Denial of service via too many temporary upload files",
+		Description: "No cap on temp files from a single request enables disk exhaustion.",
+		Reference:   nvd + "CVE-2019-11048",
+		Affected:    []RangeSpec{br("7.2", "7.2.31"), br("7.3", "7.3.18"), br("7.4", "7.4.6")},
+	},
+	{
+		ID: "CVE-2019-9641", Severity: "medium",
+		Title:       "exif: uninitialized read parsing crafted images",
+		Description: "An uninitialized memory read in the exif extension.",
+		Reference:   nvd + "CVE-2019-9641",
+		Affected:    []RangeSpec{br("7.1", "7.1.27"), br("7.2", "7.2.16"), br("7.3", "7.3.3")},
+	},
+
+	// ---- 5.x / 7.0 era ----
+	{
+		ID: "CVE-2018-19935", Severity: "medium",
+		Title:       "imap: null pointer dereference (DoS)",
+		Description: "A crafted mailbox string can crash the imap extension.",
+		Reference:   nvd + "CVE-2018-19935",
+		Affected:    []RangeSpec{br("5.6", "5.6.39"), br("7.0", "7.0.33"), br("7.1", "7.1.25"), br("7.2", "7.2.13")},
 	},
 	{
 		ID: "CVE-2018-17082", Severity: "medium",
 		Title:       "XSS via Transfer-Encoding in the bundled Apache SAPI",
-		Affected:    "< 5.6.38, < 7.0.32, < 7.1.22, < 7.2.10",
-		Description: "The Apache2 component mishandles Transfer-Encoding allowing cross-site scripting.",
-		Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2018-17082",
-		match: anyOf(
-			inBranchBelow(5, 6, 38), inBranchBelow(7, 0, 32),
-			inBranchBelow(7, 1, 22), inBranchBelow(7, 2, 10),
-		),
+		Description: "The Apache2 component mishandles Transfer-Encoding, allowing cross-site scripting.",
+		Reference:   nvd + "CVE-2018-17082",
+		Affected:    []RangeSpec{br("5.6", "5.6.38"), br("7.0", "7.0.32"), br("7.1", "7.1.22"), br("7.2", "7.2.10")},
+	},
+	{
+		ID: "CVE-2016-5385", Severity: "medium",
+		Title:       "httpoxy: HTTP_PROXY trusted from request header",
+		Description: "CGI/FPM set HTTP_PROXY from the client-controlled Proxy header, enabling SSRF of outbound requests.",
+		Reference:   nvd + "CVE-2016-5385", Note: "CGI/FPM SAPIs making outbound requests",
+		Affected: []RangeSpec{br("5.5", "5.5.38"), br("5.6", "5.6.24"), br("7.0", "7.0.9")},
 	},
 	{
 		ID: "CVE-2015-4024", Severity: "high",
 		Title:       "Multipart/form-data denial of service",
-		Affected:    "< 5.4.41, < 5.5.25, < 5.6.9",
-		Description: "Algorithmic complexity in multipart/form-data parsing enables a denial-of-service.",
-		Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2015-4024",
-		match:       anyOf(inBranchBelow(5, 4, 41), inBranchBelow(5, 5, 25), inBranchBelow(5, 6, 9)),
+		Description: "Algorithmic complexity in multipart/form-data parsing enables a denial of service.",
+		Reference:   nvd + "CVE-2015-4024",
+		Affected:    []RangeSpec{br("5.4", "5.4.41"), br("5.5", "5.5.25"), br("5.6", "5.6.9")},
+	},
+	{
+		ID: "CVE-2015-0273", Severity: "high",
+		Title:       "DateTime use-after-free",
+		Description: "A use-after-free in the date extension can be triggered by crafted input.",
+		Reference:   nvd + "CVE-2015-0273",
+		Affected:    []RangeSpec{br("5.4", "5.4.38"), br("5.5", "5.5.22"), br("5.6", "5.6.6")},
 	},
 	{
 		ID: "CVE-2012-1823", Severity: "critical",
-		Title:    "php-cgi query-string argument injection (RCE/source disclosure)",
-		Affected: "< 5.3.12, < 5.4.2 (php-cgi SAPI)",
-		Description: "When run as a CGI, PHP treats query-string parameters without '=' as command-line " +
-			"arguments, enabling source disclosure and remote code execution.",
-		Reference: "https://nvd.nist.gov/vuln/detail/CVE-2012-1823",
-		Note:      "php-cgi SAPI only",
-		match:     anyOf(lessThan(5, 3, 12), inBranchBelow(5, 4, 2)),
+		Title:       "php-cgi query-string argument injection (RCE / source disclosure)",
+		Description: "As a CGI, PHP treats query-string parameters without '=' as command-line arguments, enabling source disclosure and remote code execution.",
+		Reference:   nvd + "CVE-2012-1823", Note: "php-cgi SAPI only",
+		Affected: []RangeSpec{lo("5.3.12"), br("5.4", "5.4.2")},
+	},
+	{
+		ID: "CVE-2011-4885", Severity: "high",
+		Title:       "Hash-collision denial of service (max_input_vars)",
+		Description: "Predictable form-field hashing enables CPU exhaustion; mitigated by the max_input_vars limit introduced in 5.3.9.",
+		Reference:   nvd + "CVE-2011-4885",
+		Affected:    []RangeSpec{lo("5.3.9")},
 	},
 }
 
-// eolBranch records the end of security support for a major.minor branch.
-type eolBranch struct {
-	securityEnd string // YYYY-MM-DD
+// builtinCMS holds a small set of famous, accurately-bounded CMS core issues,
+// keyed by framework name (lowercase).
+var builtinCMS = map[string][]FeedEntry{
+	"wordpress": {
+		{
+			ID: "CVE-2024-31210", Severity: "high",
+			Title:       "WordPress: RCE via plugin upload (authenticated)",
+			Description: "An authenticated admin could upload a PHP file via the plugin uploader in affected versions.",
+			Reference:   nvd + "CVE-2024-31210",
+			Affected:    []RangeSpec{lo("6.5.2")},
+		},
+		{
+			ID: "CVE-2023-2745", Severity: "medium",
+			Title:       "WordPress: directory traversal exposing drafts via block themes",
+			Description: "A path-handling flaw could disclose unpublished content.",
+			Reference:   nvd + "CVE-2023-2745",
+			Affected:    []RangeSpec{lo("6.2.1")},
+		},
+		{
+			ID: "CVE-2022-21661", Severity: "high",
+			Title:       "WordPress: SQL injection via WP_Query",
+			Description: "A SQL injection reachable through WP_Query in affected core versions.",
+			Reference:   nvd + "CVE-2022-21661",
+			Affected:    []RangeSpec{lo("5.8.3")},
+		},
+		{
+			ID: "CVE-2022-21662", Severity: "medium",
+			Title:       "WordPress: stored XSS via post slugs (authenticated)",
+			Description: "A low-privileged author could store cross-site scripting.",
+			Reference:   nvd + "CVE-2022-21662",
+			Affected:    []RangeSpec{lo("5.8.3")},
+		},
+	},
+	"drupal": {
+		{
+			ID: "CVE-2018-7600", Severity: "critical",
+			Title:       "Drupal: remote code execution (Drupalgeddon2)",
+			Description: "Insufficient input sanitisation in form rendering allows unauthenticated remote code execution.",
+			Reference:   nvd + "CVE-2018-7600",
+			Affected:    []RangeSpec{rng("7.0", "7.58"), rng("8.0", "8.5.1")},
+		},
+		{
+			ID: "CVE-2018-7602", Severity: "critical",
+			Title:       "Drupal: remote code execution (Drupalgeddon2 follow-up)",
+			Description: "A further remote code execution in the same subsystem as CVE-2018-7600.",
+			Reference:   nvd + "CVE-2018-7602",
+			Affected:    []RangeSpec{rng("7.0", "7.59"), rng("8.0", "8.5.3")},
+		},
+		{
+			ID: "CVE-2019-6340", Severity: "critical",
+			Title:       "Drupal: REST module remote code execution",
+			Description: "Missing input validation in some REST resources allows remote code execution.",
+			Reference:   nvd + "CVE-2019-6340", Note: "sites with RESTful Web Services enabled",
+			Affected: []RangeSpec{rng("8.0", "8.6.10")},
+		},
+	},
+	"joomla": {
+		{
+			ID: "CVE-2023-23752", Severity: "medium",
+			Title:       "Joomla: improper access control exposes webservice credentials",
+			Description: "An unauthenticated request can reach privileged configuration endpoints.",
+			Reference:   nvd + "CVE-2023-23752",
+			Affected:    []RangeSpec{rng("4.0.0", "4.2.8")},
+		},
+		{
+			ID: "CVE-2015-8562", Severity: "critical",
+			Title:       "Joomla: PHP object injection remote code execution",
+			Description: "A crafted User-Agent/X-Forwarded-For enables object injection and remote code execution.",
+			Reference:   nvd + "CVE-2015-8562",
+			Affected:    []RangeSpec{rng("1.5.0", "3.4.6")},
+		},
+	},
 }
 
-// eolTable is indexed by "major.minor". Dates are PHP.net's published
-// end-of-life dates for each release branch.
-var eolTable = map[string]eolBranch{
-	"5.4": {"2015-09-14"},
-	"5.5": {"2016-07-21"},
-	"5.6": {"2018-12-31"},
-	"7.0": {"2019-01-10"},
-	"7.1": {"2019-12-01"},
-	"7.2": {"2020-11-30"},
-	"7.3": {"2021-12-06"},
-	"7.4": {"2022-11-28"},
-	"8.0": {"2023-11-26"},
-	"8.1": {"2025-12-31"},
-	"8.2": {"2026-12-31"},
-	"8.3": {"2027-12-31"},
-	"8.4": {"2028-12-31"},
+// builtinEOL maps a major.minor branch to its end of security support date.
+var builtinEOL = map[string]string{
+	"5.4": "2015-09-14",
+	"5.5": "2016-07-21",
+	"5.6": "2018-12-31",
+	"7.0": "2019-01-10",
+	"7.1": "2019-12-01",
+	"7.2": "2020-11-30",
+	"7.3": "2021-12-06",
+	"7.4": "2022-11-28",
+	"8.0": "2023-11-26",
+	"8.1": "2025-12-31",
+	"8.2": "2026-12-31",
+	"8.3": "2027-12-31",
+	"8.4": "2028-12-31",
 }

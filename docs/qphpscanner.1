@@ -39,12 +39,13 @@ an IPv4 or IPv6 literal
 a CIDR block
 .RB ( 10.0.0.0/24 ),
 a dashed range
-.RB ( 192.168.1.10-20
-or
-.BR 10.0.0.1-10.0.0.50 ),
-a per-octet wildcard
+.RB ( 192.168.1.10-20 ,
+.BR 10.0.0.1-10.0.0.50 ,
+.BR 2001:db8::1-2001:db8::ff ),
+a wildcard
 .RB ( 192.168.1.* ,
-.BR 10.0.*.* ),
+.BR 10.0.*.* ,
+.BR 2001:db8::* ),
 a DNS wildcard
 .RB ( *.example.com ,
 which enumerates subdomains via Certificate Transparency),
@@ -65,13 +66,13 @@ mixture (e.g. \fB80,443,8000-8100\fR). Default: a built-in common-web-port set.
 TLS handling. \fBauto\fR (default) infers from the port and falls back to the
 other scheme; \fBon\fR forces HTTPS; \fBoff\fR forces HTTP.
 .TP
-.BI \-\-format " text|json|xml"
+.BI \-\-format " text|json|xml|csv|sarif|ndjson"
 Machine-readable scan output format (default \fBtext\fR).
 .TP
 .BI \-\-out " file"
 Write scan output to \fIfile\fR instead of standard output.
 .TP
-.BI \-\-report " text|rtf|pdf"
+.BI \-\-report " text|rtf|pdf|html"
 Also produce a human-readable report in the given format.
 .TP
 .BI \-\-report\-out " file"
@@ -105,6 +106,68 @@ Suppress progress output.
 .B \-\-no\-dns\-enum
 Disable subdomain enumeration for \fB*.domain\fR targets.
 .TP
+.BI \-\-targets\-file " file" ", " \-iL " file"
+Read targets from a file, one per line ('-' for stdin). Blank lines and
+'#' comments are ignored.
+.TP
+.B \-\-resolve\-dns
+Record forward and reverse (PTR) DNS for each host.
+.TP
+.B \-\-banners
+Grab a short service banner from open ports that do not speak HTTP.
+.TP
+.BI \-\-rate " n"
+Cap outbound HTTP requests to n per second across the scan.
+.TP
+.BI \-\-per\-host\-concurrency " n"
+Limit concurrent probes against a single host.
+.TP
+.BI \-\-jitter " duration"
+Sleep a random time up to this before each service probe.
+.TP
+.BI \-\-retries " n"
+Retry transient network failures n times with backoff.
+.TP
+.BI \-\-header " 'Name: value'"
+Add a request header (repeatable).
+.TP
+.BI \-\-cookie " value"
+Send a Cookie header.
+.TP
+.BI \-\-bearer " token"
+Send Authorization: Bearer token.
+.TP
+.BI \-\-basic " user:pass"
+HTTP Basic authentication.
+.TP
+.BI \-\-vhost " host"
+Override the Host header (virtual-host scanning).
+.TP
+.BI \-\-proxy " url"
+Route requests through an http(s):// or socks5:// proxy.
+.TP
+.BI \-\-vuln\-feed " file|url"
+Merge an external vulnerability feed (repeatable).
+.TP
+.BI \-\-fail\-on " level"
+Exit with status 2 if a finding meets \fIlevel\fR: low, medium, high,
+critical or eol.
+.TP
+.BI \-\-oA " base"
+Write json/xml/csv/sarif/txt outputs and an HTML report to \fIbase\fR.*
+.TP
+.BI \-\-diff " file"
+Compare against a prior JSON scan result and print the differences.
+.TP
+.BI \-\-diff\-format " text|json"
+Format for \fB\-\-diff\fR output (default text).
+.TP
+.BI \-\-resume " file"
+Checkpoint completed services to \fIfile\fR and resume from it.
+.TP
+.BI \-\-web\-auth " user:pass"
+Protect the web GUI with HTTP Basic authentication.
+.TP
 .BI \-\-config " file"
 Load settings from a YAML configuration file. Explicit flags override config
 values; positional targets override the config's target list.
@@ -133,8 +196,11 @@ write-up in text, RTF or PDF. Both may be produced in a single run.
 The scan completed.
 .TP
 .B 1
-A fatal error occurred (invalid target or port spec, unreadable config, or an
-I/O error).
+A fatal error occurred (invalid target or port spec, unreadable config/feed, or
+an I/O error).
+.TP
+.B 2
+The scan completed but a \fB\-\-fail\-on\fR gate matched.
 .SH EXAMPLES
 .TP
 Is this service PHP?

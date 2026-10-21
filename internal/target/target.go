@@ -148,13 +148,9 @@ func expandHostSpec(spec string, max int) ([]string, error) {
 		return expandCIDR(spec, max)
 	}
 
-	// IPv6 literal (no wildcard/range support beyond CIDR and single).
-	if isIPv6(spec) {
-		addr, err := netip.ParseAddr(spec)
-		if err != nil {
-			return nil, fmt.Errorf("invalid IPv6 address %q: %w", spec, err)
-		}
-		return []string{addr.String()}, nil
+	// IPv6 territory (contains a colon; hostnames and bare IPv4 do not).
+	if strings.Contains(spec, ":") {
+		return expandIPv6(spec, max)
 	}
 
 	// Full dashed IPv4 range: a.b.c.d-e.f.g.h
@@ -182,12 +178,57 @@ func expandHostSpec(spec string, max int) ([]string, error) {
 	return []string{spec}, nil
 }
 
-func isIPv6(s string) bool {
-	if !strings.Contains(s, ":") {
-		return false
+// expandIPv6 handles an IPv6 single address, a dashed range (a::1-a::ff) or a
+// trailing-group wildcard (2001:db8::*).
+func expandIPv6(spec string, max int) ([]string, error) {
+	// Dashed range: both sides parse as IPv6.
+	if strings.Count(spec, "-") == 1 {
+		i := strings.IndexByte(spec, '-')
+		lo, hi := spec[:i], spec[i+1:]
+		la, e1 := netip.ParseAddr(lo)
+		ha, e2 := netip.ParseAddr(hi)
+		if e1 == nil && e2 == nil && la.Is6() && ha.Is6() {
+			return enumerateIPv6(la, ha, max)
+		}
 	}
-	addr, err := netip.ParseAddr(s)
-	return err == nil && addr.Is6() && !addr.Is4In6()
+
+	// Trailing-group wildcard: the final hextet becomes 0..ffff.
+	if strings.HasSuffix(spec, "*") {
+		base := strings.TrimSuffix(spec, "*") + "0"
+		end := strings.TrimSuffix(spec, "*") + "ffff"
+		la, e1 := netip.ParseAddr(base)
+		ha, e2 := netip.ParseAddr(end)
+		if e1 != nil || e2 != nil {
+			return nil, fmt.Errorf("invalid IPv6 wildcard %q", spec)
+		}
+		return enumerateIPv6(la, ha, max)
+	}
+
+	addr, err := netip.ParseAddr(spec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid IPv6 address %q: %w", spec, err)
+	}
+	return []string{addr.String()}, nil
+}
+
+func enumerateIPv6(lo, hi netip.Addr, max int) ([]string, error) {
+	if lo.Compare(hi) > 0 {
+		return nil, fmt.Errorf("IPv6 range start %s is greater than end %s", lo, hi)
+	}
+	var out []string
+	for a := lo; ; a = a.Next() {
+		if !a.IsValid() {
+			break
+		}
+		out = append(out, a.String())
+		if len(out) > max {
+			return nil, fmt.Errorf("IPv6 range expands to more than %d hosts; narrow it or raise the limit", max)
+		}
+		if a.Compare(hi) == 0 {
+			break
+		}
+	}
+	return out, nil
 }
 
 func looksLikeIPv4Pattern(s string) bool {
