@@ -10,8 +10,8 @@ import (
 
 // OutputFormats and ReportFormats enumerate what the CLI accepts.
 var (
-	OutputFormats = []string{"text", "json", "xml"}
-	ReportFormats = []string{"text", "rtf", "pdf"}
+	OutputFormats = []string{"text", "json", "xml", "csv", "sarif", "ndjson"}
+	ReportFormats = []string{"text", "rtf", "pdf", "html"}
 )
 
 // WriteOutput renders machine-readable scan output in the given format.
@@ -23,8 +23,14 @@ func WriteOutput(w io.Writer, res *scanner.ScanResult, format string) error {
 		return writeJSON(w, res)
 	case "xml":
 		return writeXML(w, res)
+	case "csv":
+		return writeCSV(w, res)
+	case "sarif":
+		return writeSARIF(w, res)
+	case "ndjson":
+		return writeNDJSON(w, res)
 	default:
-		return fmt.Errorf("unknown output format %q (want text, json or xml)", format)
+		return fmt.Errorf("unknown output format %q (want text, json, xml, csv, sarif or ndjson)", format)
 	}
 }
 
@@ -38,8 +44,10 @@ func WriteReport(w io.Writer, res *scanner.ScanResult, format string) error {
 		return writeRTF(w, doc)
 	case "pdf":
 		return writePDF(w, doc)
+	case "html":
+		return writeHTML(w, doc)
 	default:
-		return fmt.Errorf("unknown report format %q (want text, rtf or pdf)", format)
+		return fmt.Errorf("unknown report format %q (want text, rtf, pdf or html)", format)
 	}
 }
 

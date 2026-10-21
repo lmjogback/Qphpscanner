@@ -73,3 +73,9 @@ report:
 web:
   enabled: false
   listen: "127.0.0.1:8088"
+
+# Note: the newer scan-shaping options — rate limiting, retries, jitter,
+# per-host concurrency, DNS/banner enrichment, auth/headers/vhost/proxy,
+# vulnerability feeds, --fail-on, --diff, --resume, --oA and --targets-file —
+# are command-line flags (see `qphpscanner --help` and docs/USAGE.md). Keys for
+# them are not read from this config file.

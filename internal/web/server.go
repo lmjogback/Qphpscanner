@@ -4,6 +4,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -21,19 +22,36 @@ import (
 //go:embed assets
 var assets embed.FS
 
-// Server hosts the GUI and API. The most recent scan result is retained in
-// memory so report downloads do not require re-scanning.
+// historyItem is one retained scan result.
+type historyItem struct {
+	ID     string
+	At     time.Time
+	Result *scanner.ScanResult
+}
+
+// Server hosts the GUI and API. Recent scan results are retained in memory so
+// report downloads and the history view do not require re-scanning.
 type Server struct {
 	addr       string
 	maxTargets int
+	histMax    int
 
-	mu   sync.Mutex
-	last *scanner.ScanResult
+	authUser string
+	authPass string
+
+	mu      sync.Mutex
+	seq     int
+	history []historyItem // newest first
 }
 
 // NewServer creates a Server bound to addr (e.g. "127.0.0.1:8088").
 func NewServer(addr string) *Server {
-	return &Server{addr: addr, maxTargets: 4096}
+	return &Server{addr: addr, maxTargets: 4096, histMax: 25}
+}
+
+// SetAuth enables HTTP Basic authentication for the whole server.
+func (s *Server) SetAuth(user, pass string) {
+	s.authUser, s.authPass = user, pass
 }
 
 // Handler returns the HTTP handler (useful for tests).
@@ -45,8 +63,53 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("GET /api/download", s.handleDownload)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.Handle("/", fileServer)
-	return logMiddleware(mux)
+	return s.authMiddleware(mux)
+}
+
+// authMiddleware enforces Basic auth when credentials are configured.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authUser != "" || s.authPass != "" {
+			u, p, ok := r.BasicAuth()
+			if !ok || subtleEqual(u, s.authUser) == false || subtleEqual(p, s.authPass) == false {
+				w.Header().Set("WWW-Authenticate", `Basic realm="qphpscanner"`)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) store(res *scanner.ScanResult) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	id := fmt.Sprintf("scan-%d", s.seq)
+	s.history = append([]historyItem{{ID: id, At: time.Now(), Result: res}}, s.history...)
+	if len(s.history) > s.histMax {
+		s.history = s.history[:s.histMax]
+	}
+	return id
+}
+
+func (s *Server) lookup(id string) *scanner.ScanResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" {
+		if len(s.history) > 0 {
+			return s.history[0].Result
+		}
+		return nil
+	}
+	for _, h := range s.history {
+		if h.ID == id {
+			return h.Result
+		}
+	}
+	return nil
 }
 
 // ListenAndServe starts the server.
@@ -160,19 +223,15 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.Lock()
-	s.last = result
-	s.mu.Unlock()
+	s.store(result)
 
 	send(streamMsg{Type: "result", Result: result})
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	last := s.last
-	s.mu.Unlock()
-	if last == nil {
-		http.Error(w, "no scan has been run yet", http.StatusBadRequest)
+	res := s.lookup(r.URL.Query().Get("scan"))
+	if res == nil {
+		http.Error(w, "no such scan (run one first)", http.StatusBadRequest)
 		return
 	}
 
@@ -187,14 +246,20 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		ctype, fname, isOut = "application/json", "qphpscan.json", true
 	case "xml":
 		ctype, fname, isOut = "application/xml", "qphpscan.xml", true
+	case "csv":
+		ctype, fname, isOut = "text/csv; charset=utf-8", "qphpscan.csv", true
+	case "sarif":
+		ctype, fname, isOut = "application/sarif+json", "qphpscan.sarif", true
 	case "text", "txt":
 		ctype, fname, isOut = "text/plain; charset=utf-8", "qphpscan.txt", true
 	case "rtf":
 		ctype, fname = "application/rtf", "qphpscan-report.rtf"
 	case "pdf":
 		ctype, fname = "application/pdf", "qphpscan-report.pdf"
+	case "html":
+		ctype, fname = "text/html; charset=utf-8", "qphpscan-report.html"
 	default:
-		http.Error(w, "unknown format (want json, xml, text, rtf or pdf)", http.StatusBadRequest)
+		http.Error(w, "unknown format (want json, xml, csv, sarif, text, rtf, pdf or html)", http.StatusBadRequest)
 		return
 	}
 
@@ -203,13 +268,31 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	if isOut {
-		err = report.WriteOutput(w, last, format)
+		err = report.WriteOutput(w, res, format)
 	} else {
-		err = report.WriteReport(w, last, format)
+		err = report.WriteReport(w, res, format)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// handleHistory lists retained scans (newest first) with light summaries.
+func (s *Server) handleHistory(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	items := make([]map[string]interface{}, 0, len(s.history))
+	for _, h := range s.history {
+		hosts := make([]string, 0, len(h.Result.Targets))
+		for _, t := range h.Result.Targets {
+			hosts = append(hosts, t.Host)
+		}
+		items = append(items, map[string]interface{}{
+			"id": h.ID, "at": h.At.Format(time.RFC3339),
+			"summary": h.Result.Summary, "hosts": hosts, "mode": h.Result.Meta.Mode,
+		})
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"scans": items})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
@@ -220,10 +303,8 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	_ = enc.Encode(v)
 }
 
-func logMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
+func subtleEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func splitTargets(s string) []string {

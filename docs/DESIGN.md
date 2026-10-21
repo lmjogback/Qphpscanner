@@ -32,9 +32,13 @@ internal/
   portspec           port spec parsing (single, list, range)
   probe              low-level TCP connect checks and bounded HTTP(S) fetches
   php                PHP detection, fingerprinting, vuln correlation (the core)
+                     — catalog.go (data-driven vuln/EOL catalogue + feed loader),
+                     vulndb.go (built-in data), cms.go (CMS version detection),
+                     favicon.go (mmh3 favicon hash)
   securitytxt        RFC 9116 security.txt discovery and parsing
   dnsenum            subdomain discovery for "*.domain" via Certificate Transparency
-  scanner            orchestration: expand → connect → probe → analyse → aggregate
+  scanner            orchestration: expand → connect → probe → analyse → aggregate;
+                     enrich.go (DNS, jitter, per-host gate), checkpoint.go (resume)
   report             rendering: text, JSON, XML, RTF, PDF (from one doc model)
   config             YAML-subset parser and typed configuration
   web                embedded single-page GUI + JSON API over the scanner
@@ -142,16 +146,36 @@ always explainable, and each distinct signal is counted once.
 - **End of life**: the detected `major.minor` branch is compared against
   PHP.net's published security-support end dates relative to the current date.
 
-### Vulnerability correlation
+### Vulnerability correlation and feeds
 
-`internal/php/vulndb.go` holds a curated catalogue of high-signal,
-version-correlatable PHP CVEs (e.g. CVE-2024-4577, CVE-2024-1874,
-CVE-2023-3824, CVE-2022-31626, CVE-2019-11043, CVE-2012-1823). Each entry has a
-predicate over the parsed `major.minor.patch`. Correlation runs only in deep
-mode, only for the native PHP (and Zend Server) variant, and every result is
-labelled with a `match_basis` noting any required SAPI/configuration (e.g.
-"Windows php-cgi deployments only"). These are **leads derived from the version
-string**, never confirmed exploited findings.
+The vulnerability data is a **data-driven catalogue** (`internal/php/catalog.go`
++ `vulndb.go`): each entry is a `FeedEntry` with one or more `RangeSpec`
+affected ranges (`branch` / `introduced` / `fixed` / `lt`), matched against the
+parsed version. The built-in catalogue holds ~40 high-signal PHP-core CVEs plus
+famous CMS-core CVEs (Drupalgeddon2, WordPress/Joomla core), keyed by framework.
+
+External **feeds** (JSON, schema `qphpscanner-vuln-feed/1`) are loaded from a
+file or URL and `Merge`d on top of the built-in data, overriding EOL dates by
+branch — so the catalogue can be kept current without rebuilding. The feed
+format is the same `FeedEntry`/`RangeSpec` model exposed as JSON.
+
+CMS core versions are detected (`cms.go`) from generator meta tags,
+`readme.html`, `CHANGELOG.txt` and Joomla manifests, then correlated against
+the CMS catalogue. Correlation runs only in deep mode; PHP-core entries apply
+only to the native PHP/Zend Server variant. Every result carries a `match_basis`
+noting any required SAPI/configuration. These are **leads derived from the
+version string**, never confirmed exploited findings.
+
+### Enrichment, politeness and resume
+
+A global token-bucket `Limiter` in the probe layer caps requests per second;
+per-host concurrency and jitter are enforced in the scanner's worker loop;
+transient failures are retried with backoff. Hosts are optionally resolved
+(forward + reverse DNS), and open non-HTTP ports yield a short grabbed banner.
+A checkpoint file records each completed service as NDJSON so an interrupted
+scan resumes by skipping finished work. Requests can carry custom headers,
+Basic/Bearer/cookie auth and a Host override, and route through an http(s) or
+SOCKS5 proxy (a minimal dependency-free SOCKS5 client).
 
 ## Data schema
 
@@ -180,14 +204,23 @@ ScanResult
                security_txt }
 ```
 
+(Per-service results also carry `banner`, and the PHP block adds
+`framework_versions` and `favicon_hash`; targets carry resolved `addresses` and
+`ptr` names.)
+
 JSON and XML emit this directly (XML is rooted at `<scan>`; maps are omitted as
-XML cannot represent them). Text, RTF and PDF are produced from a single
-intermediate **document model** (`internal/report/doc.go`) of headings, key/
-value rows, bullets and rules, so the three human formats stay consistent.
+XML cannot represent them). CSV flattens one row per service; SARIF 2.1.0
+exposes findings (CVEs, EOL, exposed phpinfo) as results with rules for CI
+ingestion; NDJSON streams one object per service. Text, RTF, PDF and HTML are
+produced from a single intermediate **document model**
+(`internal/report/doc.go`) of headings, key/value rows, bullets and rules, so
+the human formats stay consistent. `report.Diff` compares two results, and
+`report.FailOn` powers `--fail-on` severity/EOL gating.
 
-## Self-contained RTF and PDF
+## Self-contained RTF, PDF and HTML
 
-To avoid third-party dependencies, both writers are implemented directly:
+To avoid third-party dependencies, the writers are implemented directly (HTML
+is rendered from the same document model with inline, theme-aware CSS):
 
 - **RTF** — emits an `{\rtf1 …}` document with Helvetica, bold headings, sized
   text and bullet paragraphs; control characters are escaped and non-ASCII is

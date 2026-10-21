@@ -26,32 +26,51 @@ version-based vulnerabilities**. It never attempts to exploit anything.
 - **Version, variant, extensions & modules** (deep mode): PHP vs HHVM vs Zend
   Server; version from headers or `phpinfo()`; extensions (OPcache, Xdebug,
   ionCube, mysqli, curl, gd, …); web-server modules from the `Server` banner;
-  end-of-life evaluation per release branch.
-- **Vulnerability leads** (deep mode): a curated, version-correlated CVE
-  catalogue (e.g. CVE-2024-4577, CVE-2019-11043, CVE-2012-1823). Leads are
-  informational — correlated from the detected version, not confirmed by
-  exploitation.
+  end-of-life evaluation per release branch; a Shodan-style **favicon mmh3
+  hash** for pivoting.
+- **CMS core version detection** (deep mode): WordPress / Drupal / Joomla core
+  versions from generator tags, `readme.html`, `CHANGELOG.txt` and manifests —
+  and their correlated CVEs.
+- **Vulnerability leads** (deep mode): a curated, version-correlated catalogue
+  of ~40 PHP-core CVEs plus famous CMS-core CVEs (CVE-2024-4577,
+  CVE-2019-11043, CVE-2012-1823, Drupalgeddon2, …), **extensible with external
+  feeds** (`--vuln-feed file|URL`). Leads are informational — correlated from
+  the detected version, not confirmed by exploitation.
 - **security.txt** (RFC 9116): discovers and parses `/.well-known/security.txt`
   and surfaces it in every output and report.
 - **Flexible targets**: single URL, IPv4/IPv6 literal, CIDR block, dashed
-  ranges (`1.2.3.4-9`, `1.2.3.4-1.2.3.9`), per-octet wildcards (`1.2.3.*`), and
-  **DNS wildcards** (`*.example.com`) that enumerate subdomains via
-  Certificate Transparency.
+  ranges (`1.2.3.4-9`, `1.2.3.4-1.2.3.9`, IPv6 `a::1-a::ff`), per-octet and
+  IPv6 trailing-group wildcards (`1.2.3.*`, `2001:db8::*`), **DNS wildcards**
+  (`*.example.com`) enumerated via Certificate Transparency, and target lists
+  from a file or stdin (`--targets-file`/`-iL`).
 - **Flexible ports**: single, comma lists and ranges, mixable
   (`80,443,8000-8100`).
 - **TLS control**: `auto` (infer from port), `on`, or `off`.
 - **Two scan depths**: `detect` (is it PHP?) and `deep` (full fingerprint).
+- **Enrichment**: forward/reverse **DNS** per host (`--resolve-dns`) and
+  **banner grabbing** for open non-HTTP ports (`--banners`).
+- **Request shaping**: custom headers, Basic/Bearer/cookie **auth**, **vhost**
+  (Host header) scanning, and an http(s)/**SOCKS5** proxy.
+- **Politeness**: global **rate limiting** (`--rate`), per-host concurrency,
+  jitter, and retries with backoff.
+- **Resume**: checkpoint completed services and continue an interrupted scan
+  (`--resume`).
 - **Live progress**: a running counter by default (updated in place on a
   terminal) and a `--verbose` mode that reports every host/port outcome;
   the web GUI shows a progress bar and a live feed.
-- **Output formats**: plain **text**, **JSON**, **XML**.
-- **Report formats**: **text**, **RTF**, **PDF** (both RTF and PDF are written
-  by hand — see below).
+- **Output formats**: **text**, **JSON**, **XML**, **CSV**, **SARIF** (CI
+  ingestion) and **NDJSON**; `--oA` writes them all at once.
+- **Report formats**: **text**, **RTF**, **PDF**, **HTML** (RTF/PDF/HTML
+  written by hand — see below).
+- **Scan diffing** (`--diff`) and **severity exit codes** (`--fail-on`) for
+  monitoring and CI gating.
 - **YAML config file** support.
-- **CLI *and* a web GUI** with a clean, usable interface and a collapsible
-  history of previous scans.
+- **CLI *and* a web GUI** with live progress, a cancel button, optional Basic
+  auth, and a persistent, collapsible history of previous scans with per-scan
+  downloads.
 - **Zero external dependencies** — the entire tool builds from the Go standard
-  library, including the YAML parser and the RTF/PDF writers.
+  library, including the YAML parser, the RTF/PDF writers, the SOCKS5 client
+  and the mmh3 favicon hash.
 
 ## Install
 
@@ -109,8 +128,24 @@ qphpscanner --config scan.yaml
 | `--verbose` / `-v` | per-host/port progress detail |
 | `--quiet` / `-q` | suppress progress output |
 | `--no-dns-enum` | disable `*.domain` subdomain enumeration |
+| `--targets-file` / `-iL` | read targets from a file (`-` for stdin) |
+| `--resolve-dns` | add forward/reverse DNS per host |
+| `--banners` | grab a banner from open non-HTTP ports |
+| `--rate N` | max outbound HTTP requests/sec |
+| `--per-host-concurrency N` | max concurrent probes per host |
+| `--jitter DUR` | random delay before each service probe |
+| `--retries N` | retries on transient network errors |
+| `--header "K: V"` | extra request header (repeatable) |
+| `--cookie` / `--bearer` / `--basic u:p` | authentication |
+| `--vhost HOST` | override the Host header (virtual-host scan) |
+| `--proxy URL` | http(s):// or socks5:// proxy |
+| `--vuln-feed FILE\|URL` | merge an external vulnerability feed (repeatable) |
+| `--fail-on LEVEL` | exit non-zero on `low\|medium\|high\|critical\|eol` |
+| `--oA BASE` | write json/xml/csv/sarif/txt + HTML report to `BASE.*` |
+| `--diff FILE` | diff against a prior JSON scan |
+| `--resume FILE` | checkpoint/resume a scan |
 | `--config FILE` | load a YAML config |
-| `--web` / `--listen` | run the web GUI / its address |
+| `--web` / `--listen` / `--web-auth u:p` | run the web GUI / address / Basic auth |
 | `--version` | print version |
 
 See [`docs/USAGE.md`](docs/USAGE.md) for the full reference and
@@ -128,14 +163,32 @@ completed scan is kept **below the current one as a collapsible entry** so you
 can revisit earlier runs. All scan-derived text is inserted into the DOM as
 text (never HTML), so hostile response data cannot be reflected into the page.
 
+## Vulnerability data & feeds
+
+Deep mode correlates the detected PHP (and CMS) version against a curated,
+built-in catalogue of ~40 PHP-core CVEs plus famous CMS-core CVEs, and
+evaluates end-of-life status per release branch. The catalogue is data-driven
+and **extensible at runtime**:
+
+```sh
+qphpscanner --mode deep --vuln-feed feeds/php-extra.json --vuln-feed https://example.com/feed.json example.com
+```
+
+Feeds are JSON, merged on top of the built-in data (EOL dates override by
+branch). See [`docs/vuln-feed.example.json`](docs/vuln-feed.example.json) for
+the schema. Correlation is informational — a lead means the version is *in an
+affected range*, not that the host is exploitable; many issues require a
+specific SAPI or configuration (shown in each lead's `match_basis`).
+
 ## Output & report formats
 
-- **Scan output** (`--format`): `text`, `json`, `xml` — machine-readable
-  records of every probed service.
-- **Report** (`--report` / `--report-out`): `text`, `rtf`, `pdf` — a
+- **Scan output** (`--format`): `text`, `json`, `xml`, `csv`, `sarif`,
+  `ndjson` — machine-readable records of every probed service. `--oA BASE`
+  writes json/xml/csv/sarif/txt plus an HTML report in one go.
+- **Report** (`--report` / `--report-out`): `text`, `rtf`, `pdf`, `html` — a
   human-readable write-up with a summary, per-host sections, evidence and
-  vulnerability leads. The RTF and PDF writers are self-contained (no external
-  libraries), so reports work in any build environment.
+  vulnerability leads. The RTF, PDF and HTML writers are self-contained (no
+  external libraries), so reports work in any build environment.
 
 ## Development
 

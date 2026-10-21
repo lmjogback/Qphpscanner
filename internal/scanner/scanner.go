@@ -55,6 +55,49 @@ type Options struct {
 	Enumerator SubdomainEnumerator
 	// VerifySubdomains keeps only discovered subdomains that resolve in DNS.
 	VerifySubdomains bool
+
+	// --- Politeness ---
+	// RateLimit caps outbound HTTP requests per second across the whole scan
+	// (0 = unlimited).
+	RateLimit float64
+	// PerHostConcurrency caps concurrent service probes per host (0 = unlimited).
+	PerHostConcurrency int
+	// Jitter adds a random delay of up to this duration before each service.
+	Jitter time.Duration
+	// Retries is the number of extra attempts on a transient network error.
+	Retries int
+
+	// --- Enrichment ---
+	// ResolveDNS adds forward and reverse DNS for each host.
+	ResolveDNS bool
+	// GrabBanners reads a short banner from open ports that do not speak HTTP.
+	GrabBanners bool
+
+	// --- HTTP request shaping ---
+	Headers     map[string]string
+	Cookie      string
+	BearerToken string
+	BasicUser   string
+	BasicPass   string
+	HostHeader  string
+	ProxyURL    string
+
+	// --- Data ---
+	// Catalog supplies vulnerability/EOL data (nil = built-in default).
+	Catalog *php.Catalog
+
+	// --- Resume ---
+	// CheckpointPath records completed services so a scan can resume.
+	CheckpointPath string
+
+	// Resolver overrides DNS resolution (primarily for testing).
+	Resolver DNSResolver
+}
+
+// DNSResolver is the subset of *net.Resolver the scanner uses.
+type DNSResolver interface {
+	LookupHost(ctx context.Context, host string) ([]string, error)
+	LookupAddr(ctx context.Context, addr string) ([]string, error)
 }
 
 // withDefaults fills unset options with sensible values.
@@ -133,7 +176,26 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		FollowRedirects: opts.Follow,
 		UserAgent:       opts.UserAgent,
 		MaxBodyBytes:    opts.MaxBodyBytes,
+		Headers:         opts.Headers,
+		Cookie:          opts.Cookie,
+		BearerToken:     opts.BearerToken,
+		BasicUser:       opts.BasicUser,
+		BasicPass:       opts.BasicPass,
+		HostHeader:      opts.HostHeader,
+		ProxyURL:        opts.ProxyURL,
+		Retries:         opts.Retries,
+		Limiter:         probe.NewRateLimiter(opts.RateLimit, rateBurst(opts.RateLimit)),
 	})
+
+	// Resume support.
+	cp, err := loadCheckpoint(opts.CheckpointPath)
+	if err != nil {
+		return nil, err
+	}
+	defer cp.close()
+
+	// Per-host concurrency gate.
+	hostGate := newHostGate(opts.PerHostConcurrency)
 
 	// Worker pool.
 	results := make([]ServiceResult, len(jobs))
@@ -153,7 +215,19 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			res := scanService(ctx, fetcher, jobs[idx], opts)
+
+			j := jobs[idx]
+			k := jobKey(j.ep.Host, j.port)
+			var res ServiceResult
+			if saved, ok := cp.lookup(k); ok {
+				res = saved
+			} else {
+				hostGate.acquire(j.ep.Host)
+				applyJitter(ctx, opts.Jitter)
+				res = scanService(ctx, fetcher, j, opts)
+				hostGate.release(j.ep.Host)
+				cp.record(res)
+			}
 			results[idx] = res
 			if opts.OnProgress != nil {
 				progMu.Lock()
@@ -194,7 +268,11 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		for in := range hostInputs[h] {
 			inputs = append(inputs, in)
 		}
-		out.Targets = append(out.Targets, TargetResult{Host: h, Inputs: inputs, Services: svcs})
+		tr := TargetResult{Host: h, Inputs: inputs, Services: svcs}
+		if opts.ResolveDNS {
+			tr.Addresses, tr.PTR = resolveHost(ctx, opts.resolver(), h)
+		}
+		out.Targets = append(out.Targets, tr)
 	}
 
 	out.Summary = summarise(results, hostOrder, opts)
@@ -328,6 +406,10 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 		if root != nil {
 			res.Error = root.Err
 		}
+		// Open port that did not speak HTTP: optionally grab a service banner.
+		if opts.GrabBanners {
+			res.Banner = probe.GrabBanner(ctx, j.ep.Host, j.port, opts.Timeout)
+		}
 		res.DurationMS = time.Since(start).Milliseconds()
 		return res
 	}
@@ -346,6 +428,7 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 		TargetURL: res.URL,
 		Deep:      opts.Mode == ModeDeep,
 		Root:      root,
+		Catalog:   opts.Catalog,
 	}
 	if in.Deep {
 		in.Extra = map[string]*probe.Response{}
@@ -358,6 +441,7 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 		}
 		in.EasterCredits = fetcher.Get(ctx, base+"/"+php.EasterEggCredits)
 		in.EasterLogo = fetcher.Get(ctx, base+"/"+php.EasterEggLogo)
+		in.Favicon = fetcher.Get(ctx, base+php.FaviconPath)
 	}
 
 	res.PHP = php.Analyze(in)

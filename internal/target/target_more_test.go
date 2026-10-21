@@ -56,6 +56,35 @@ func TestExpandIPv6CIDRAndBracket(t *testing.T) {
 	}
 }
 
+func TestExpandIPv6Range(t *testing.T) {
+	hs := hostsOf(t, "2001:db8::1-2001:db8::5")
+	if len(hs) != 5 || hs[0] != "2001:db8::1" || hs[4] != "2001:db8::5" {
+		t.Fatalf("IPv6 range: %v", hs)
+	}
+}
+
+func TestExpandIPv6Wildcard(t *testing.T) {
+	hs := hostsOf(t, "2001:db8::ff00:*")
+	if len(hs) != 65536 {
+		t.Fatalf("IPv6 wildcard should expand to 65536, got %d", len(hs))
+	}
+	if hs[0] != "2001:db8::ff00:0" {
+		t.Fatalf("first: %s", hs[0])
+	}
+}
+
+func TestExpandIPv6Errors(t *testing.T) {
+	if _, err := Expand("2001:db8::5-2001:db8::1", ExpandOptions{}); err == nil {
+		t.Fatal("reversed IPv6 range should error")
+	}
+	if _, err := Expand("2001:db8::zz*", ExpandOptions{}); err == nil {
+		t.Fatal("invalid IPv6 wildcard should error")
+	}
+	if _, err := Expand("2001:db8::1-2001:db8::ffff", ExpandOptions{MaxHosts: 10}); err == nil {
+		t.Fatal("oversized IPv6 range should error")
+	}
+}
+
 func TestExpandAll(t *testing.T) {
 	eps, err := ExpandAll([]string{"192.168.0.1", "192.168.0.2"}, ExpandOptions{})
 	if err != nil || len(eps) != 2 {

@@ -31,6 +31,10 @@ func DeepProbePaths() []string {
 		"/administrator/",
 		"/user/login",
 		"/index.php?s=/",
+		"/readme.html",
+		"/CHANGELOG.txt",
+		"/core/CHANGELOG.txt",
+		"/administrator/manifests/files/joomla.xml",
 	}
 }
 

@@ -45,10 +45,14 @@ Each target may be any of:
 | IPv4 CIDR | `10.0.0.0/24` |
 | IPv6 CIDR | `2001:db8::/120` |
 | Dashed range (last octet) | `192.168.1.10-20` |
-| Dashed range (full) | `10.0.0.1-10.0.0.50` |
-| Per-octet wildcard | `192.168.1.*`, `10.0.*.*` |
+| Dashed range (full) | `10.0.0.1-10.0.0.50`, `2001:db8::1-2001:db8::ff` |
+| Wildcard | `192.168.1.*`, `10.0.*.*`, `2001:db8::*` (IPv6 trailing group) |
 | DNS wildcard | `*.example.com` |
 | Hostname | `example.com` |
+
+Targets may also be read from a file or stdin with `--targets-file FILE`
+(alias `-iL`), one per line; blank lines and `#` comments are ignored. Use `-`
+to read from stdin. File targets are added to any given on the command line.
 
 When a target is a **URL**, its scheme, port and path are honoured: that exact
 endpoint is scanned (and `--ports` is ignored for it). All other target forms
@@ -112,9 +116,15 @@ All probes are GET requests; nothing is submitted and nothing is exploited.
 - `text` (default) — the same layout as the text report.
 - `json` — a structured document (see `docs/DESIGN.md` for the schema).
 - `xml` — the same data as XML, rooted at `<scan>`.
+- `csv` — one row per service, for spreadsheets and quick triage.
+- `sarif` — SARIF 2.1.0, for CI and security-tooling ingestion.
+- `ndjson` — one JSON object per service (a leading meta line), for streaming.
 
 If `--out` ends in `.json`/`.xml`/`.txt` the format is inferred from the
 extension (unless `--format` is given explicitly).
+
+`--oA BASE` writes every machine output plus an HTML report at once:
+`BASE.json`, `BASE.xml`, `BASE.csv`, `BASE.sarif`, `BASE.txt` and `BASE.html`.
 
 ## Report formats
 
@@ -125,9 +135,10 @@ vulnerability leads, security.txt). Produce one with `--report` and/or
 - `--report text` — write to stdout (or to `--report-out`).
 - `--report rtf --report-out report.rtf` — Rich Text, opens in Word/LibreOffice.
 - `--report pdf --report-out report.pdf` — PDF.
+- `--report html --report-out report.html` — self-contained HTML.
 
-`rtf` and `pdf` require `--report-out`. If only `--report-out` is given, the
-format is inferred from the file extension.
+`rtf`, `pdf` and `html` require `--report-out`. If only `--report-out` is
+given, the format is inferred from the file extension.
 
 The scan output (`--format`) and the report (`--report`) are independent — you
 can request both in one run.
@@ -178,13 +189,16 @@ qphpscanner --web --listen 0.0.0.0:9000 # bind elsewhere (use with care)
 ```
 
 The GUI offers a form (targets, ports, depth, TLS, timeout, concurrency and
-toggles), shows a **progress bar and live feed** while scanning, renders
-per-service result cards with colour-coded PHP verdicts, evidence and
-vulnerability leads, and keeps **previous scans below the current one as
-collapsible entries**. It provides one-click downloads of the latest scan as
-JSON, XML, text, RTF or PDF. It is bound to localhost by default; exposing it
-to a network makes a scan trigger available to anyone who can reach it, so do
-so only on trusted networks.
+toggles), shows a **progress bar and live feed** while scanning (with a
+**Cancel** button that aborts the run), renders per-service result cards with
+colour-coded PHP verdicts, evidence and vulnerability leads, and keeps
+**previous scans below the current one as collapsible, server-persisted
+entries** — each with its own download links. Downloads cover JSON, XML, CSV,
+SARIF, text, HTML, RTF and PDF.
+
+Protect the GUI with `--web-auth user:pass` (HTTP Basic auth). It is bound to
+localhost by default; exposing it to a network makes a scan trigger available
+to anyone who can reach it, so do so only on trusted networks and with auth.
 
 ### HTTP API
 
@@ -197,13 +211,70 @@ The GUI is backed by a tiny JSON API you can script against:
   newline-delimited JSON (`application/x-ndjson`): zero or more
   `{"type":"progress","event":{…}}` lines followed by a final
   `{"type":"result","result":{…}}` (or `{"type":"error","error":"…"}`).
-- `GET /api/download?format=json|xml|text|rtf|pdf` — renders the most recent
-  scan result.
+- `GET /api/download?format=json|xml|csv|sarif|text|html|rtf|pdf[&scan=<id>]` —
+  renders the most recent scan result, or a specific one by `scan` id.
+- `GET /api/history` — lists retained scans (newest first) with summaries and
+  ids.
+
+## Authentication & request shaping
+
+To scan applications behind auth or virtual hosts:
+
+- `--header "Name: value"` — add a request header (repeatable).
+- `--cookie "sid=…"` — send a Cookie header.
+- `--bearer TOKEN` — send `Authorization: Bearer TOKEN`.
+- `--basic user:pass` — HTTP Basic auth.
+- `--vhost HOST` — override the Host header on the initial request (name-based
+  virtual hosts on a shared IP). It is not carried across redirects.
+- `--proxy URL` — route all requests through an `http(s)://` or
+  `socks5://[user:pass@]host:port` proxy.
+
+## Politeness & rate limiting
+
+- `--rate N` — cap outbound HTTP requests to N per second across the whole scan.
+- `--per-host-concurrency N` — at most N concurrent probes against one host.
+- `--jitter DUR` — sleep a random time up to DUR before each service probe.
+- `--retries N` — retry transient network failures N times with backoff.
+
+## Enrichment
+
+- `--resolve-dns` — record forward addresses and reverse (PTR) names per host.
+- `--banners` — for open ports that do not speak HTTP, read a short service
+  banner (SSH/FTP/SMTP announce themselves) so the port is labelled.
+
+## Vulnerability feeds
+
+Deep mode correlates versions against the built-in catalogue. Merge extra data
+with `--vuln-feed FILE|URL` (repeatable); feeds override EOL dates by branch.
+See [`vuln-feed.example.json`](vuln-feed.example.json) for the schema.
+
+## Diffing scans
+
+`--diff baseline.json` compares the current scan against a previously saved
+JSON result and prints what changed (new/gone services, version and verdict
+changes, new/resolved vulnerability leads). `--diff-format` is `text` (default)
+or `json`. With `--diff`, scan output is written only to an explicit `--out`.
+
+## Resume
+
+`--resume FILE` records each completed service to FILE as it finishes. Re-run
+the same command with the same `--resume FILE` to skip already-scanned
+services and continue — useful for large or interrupted sweeps.
 
 ## Exit status
 
 - `0` — the scan completed (regardless of what was found).
-- `1` — a fatal error (bad target/port spec, unreadable config, I/O error).
+- `1` — a fatal error (bad target/port spec, unreadable config/feed, I/O error).
+- `2` — the scan completed but a `--fail-on` gate matched (see below).
+
+`--fail-on LEVEL` makes the process exit `2` when a finding meets a threshold:
+`low`, `medium`, `high`, `critical` (a vulnerability lead at least that severe)
+or `eol` (any end-of-life PHP branch). Output and reports are still written.
+This is for CI gating:
+
+```sh
+qphpscanner --mode deep --fail-on high --format sarif --out scan.sarif example.com || echo "findings!"
+```
 
 A one-line summary is printed to stderr after each scan.
 

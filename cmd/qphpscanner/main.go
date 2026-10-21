@@ -10,10 +10,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/rom/qphpscanner/internal/config"
+	"github.com/rom/qphpscanner/internal/php"
 	"github.com/rom/qphpscanner/internal/portspec"
 	"github.com/rom/qphpscanner/internal/report"
 	"github.com/rom/qphpscanner/internal/scanner"
@@ -28,11 +31,29 @@ import (
 	"github.com/rom/qphpscanner/internal/web"
 )
 
+// exitError carries a specific process exit code (e.g. for --fail-on) without
+// an error message to print.
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e *exitError) Error() string { return e.msg }
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "qphpscanner: "+err.Error())
-		os.Exit(1)
+	err := run(os.Args[1:])
+	if err == nil {
+		return
 	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		if ee.msg != "" {
+			fmt.Fprintln(os.Stderr, "qphpscanner: "+ee.msg)
+		}
+		os.Exit(ee.code)
+	}
+	fmt.Fprintln(os.Stderr, "qphpscanner: "+err.Error())
+	os.Exit(1)
 }
 
 func run(args []string) error {
@@ -68,29 +89,98 @@ func run(args []string) error {
 		return err
 	}
 
+	if err := validateFailOn(f.failOn); err != nil {
+		return err
+	}
+
 	// Web mode.
 	if webEnabled {
 		srv := web.NewServer(listen)
+		if f.webAuth != "" {
+			u, p := splitColon(f.webAuth)
+			srv.SetAuth(u, p)
+		}
 		fmt.Fprintf(os.Stderr, "qphpscanner web UI listening on http://%s/\n", displayAddr(listen))
 		return srv.ListenAndServe()
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Extra targets from a file or stdin.
+	fileTargets, err := readTargetsFile(f.targetsFile)
+	if err != nil {
+		return err
+	}
+	targets = append(targets, fileTargets...)
+
 	if len(targets) == 0 {
 		fs.Usage()
-		return fmt.Errorf("no targets given (pass targets as arguments, in --config, or use --web)")
+		return fmt.Errorf("no targets given (pass targets as arguments, --targets-file, --config, or use --web)")
+	}
+
+	// Build the vulnerability catalogue, merging any external feeds.
+	if len(f.vulnFeeds) > 0 {
+		cat := php.DefaultCatalog()
+		for _, src := range f.vulnFeeds {
+			feed, err := php.LoadFeed(ctx, src, nil)
+			if err != nil {
+				return err
+			}
+			cat.Merge(feed)
+		}
+		opts.Catalog = cat
 	}
 
 	reporter := newProgressReporter(os.Stderr, f.verbose, f.quiet)
 	opts.OnProgress = reporter.handle
 	opts.DisableDNSEnum = f.noDNSEnum
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	result, err := scanner.Scan(ctx, targets, opts)
 	reporter.finish()
 	if err != nil {
 		return err
+	}
+
+	if err := emitResults(result, f, outFmt, outFile, repFmt, repFile); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "scanned %d host(s), %d open port(s), %d PHP service(s) in %d ms\n",
+		result.Summary.HostsScanned, result.Summary.OpenPorts,
+		result.Summary.PHPConfirmed+result.Summary.PHPLikely, result.Meta.DurationMS)
+
+	if f.failOn != "" && report.FailOn(result, f.failOn) {
+		return &exitError{code: 2}
+	}
+	return nil
+}
+
+// emitResults writes scan output and reports, honouring --diff and --oA.
+func emitResults(result *scanner.ScanResult, f *flags, outFmt, outFile, repFmt, repFile string) error {
+	if f.diffPath != "" {
+		data, err := os.ReadFile(f.diffPath)
+		if err != nil {
+			return fmt.Errorf("read diff baseline: %w", err)
+		}
+		old, err := report.LoadScan(data)
+		if err != nil {
+			return err
+		}
+		if err := report.WriteDiff(os.Stdout, report.Diff(old, result), f.diffFormat); err != nil {
+			return err
+		}
+		// With --diff, scan output goes only to an explicit file.
+		if outFile != "" {
+			if err := emitOutput(result, outFmt, outFile); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if f.outAll != "" {
+		return emitAllFormats(result, f.outAll)
 	}
 
 	if err := emitOutput(result, outFmt, outFile); err != nil {
@@ -101,11 +191,24 @@ func run(args []string) error {
 			return err
 		}
 	}
-
-	fmt.Fprintf(os.Stderr, "scanned %d host(s), %d open port(s), %d PHP service(s) in %d ms\n",
-		result.Summary.HostsScanned, result.Summary.OpenPorts,
-		result.Summary.PHPConfirmed+result.Summary.PHPLikely, result.Meta.DurationMS)
 	return nil
+}
+
+// emitAllFormats writes every machine output plus an HTML report under <base>.
+func emitAllFormats(result *scanner.ScanResult, base string) error {
+	outputs := map[string]string{
+		base + ".json":  "json",
+		base + ".xml":   "xml",
+		base + ".csv":   "csv",
+		base + ".sarif": "sarif",
+		base + ".txt":   "text",
+	}
+	for path, format := range outputs {
+		if err := emitOutput(result, format, path); err != nil {
+			return err
+		}
+	}
+	return emitReport(result, "html", base+".html")
 }
 
 // resolve merges config file values with explicit CLI flags (flags win).
@@ -208,6 +311,24 @@ func resolve(f *flags, set map[string]bool, cfg *config.Config, posArgs []string
 	}
 	if set["listen"] {
 		listen = f.listen
+	}
+
+	// CLI-only options (not config-driven): apply directly.
+	opts.RateLimit = f.rate
+	opts.PerHostConcurrency = f.perHost
+	opts.Jitter = f.jitter
+	opts.Retries = f.retries
+	opts.ResolveDNS = f.resolveDNS
+	opts.GrabBanners = f.banners
+	opts.Cookie = f.cookie
+	opts.BearerToken = f.bearer
+	opts.HostHeader = f.vhost
+	opts.ProxyURL = f.proxy
+	opts.VerifySubdomains = f.verifySubdomains
+	opts.CheckpointPath = f.resume
+	opts.Headers = parseHeaders(f.headers)
+	if f.basicAuth != "" {
+		opts.BasicUser, opts.BasicPass = splitColon(f.basicAuth)
 	}
 
 	if outFmt == "" {
@@ -348,6 +469,69 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 		rest = rest[1:]
 	}
 	return positionals, nil
+}
+
+func validateFailOn(v string) error {
+	switch strings.ToLower(v) {
+	case "", "low", "medium", "high", "critical", "eol":
+		return nil
+	default:
+		return fmt.Errorf("invalid --fail-on %q (want low, medium, high, critical or eol)", v)
+	}
+}
+
+func splitColon(s string) (string, string) {
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+func parseHeaders(hs stringSlice) map[string]string {
+	if len(hs) == 0 {
+		return nil
+	}
+	m := map[string]string{}
+	for _, h := range hs {
+		i := strings.Index(h, ":")
+		if i < 0 {
+			continue
+		}
+		k := strings.TrimSpace(h[:i])
+		v := strings.TrimSpace(h[i+1:])
+		if k != "" {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+func readTargetsFile(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+	var r io.Reader
+	if path == "-" {
+		r = os.Stdin
+	} else {
+		fh, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("read targets file: %w", err)
+		}
+		defer fh.Close()
+		r = fh
+	}
+	var out []string
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, sc.Err()
 }
 
 func boolVal(p *bool, def bool) bool {
