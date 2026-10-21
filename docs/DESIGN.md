@@ -102,14 +102,28 @@ always explainable, and each distinct signal is counted once.
   `ZendServer`.
 - `Server` banner carrying `PHP/x.y.z` (version) and other tokens
   (`OpenSSL/…`, `mod_*`) reported as server modules.
-- CMS/framework headers: `X-Generator: Drupal`, `X-Drupal-Cache`,
+- CMS/framework/addon headers: `X-Generator: Drupal`, `X-Drupal-Cache`,
   `X-Redirect-By: WordPress`, `X-Pingback …/xmlrpc.php`, `Link: …api.w.org`,
-  `X-Debug-Token` (Symfony), etc.
+  `X-Debug-Token` (Symfony), `X-Clockwork-*`, `X-LiteSpeed-Cache`,
+  `X-Content-Powered-By` (Joomla/K2), `X-Shopware-*`, etc.
+
+**Server signatures**
+- Apache's `<address>… PHP/x.y.z Server at …</address>` footer on default error
+  pages (a strong signal that also leaks the exact version). All `Server`
+  header values are considered (proxies may add more than one).
+
+**Source leakage & behaviour**
+- Raw PHP source (`<?php` / `<?=`) in a response — a server misconfigured to
+  serve `.php` as text.
+- `index.php/<path>` returning 200 — PHP `PATH_INFO` handling (cgi/fpm).
 
 **Cookies** (collected across redirect hops)
 - `PHPSESSID` / `PHPSESSION` — the default PHP session cookie.
-- Framework session cookies: `laravel_session`, `symfony`, `ci_session`,
-  `CAKEPHP`, `MoodleSession`, `wordpress_*`, `XDEBUG_SESSION`, `phpMyAdmin`, …
+- Framework/app session cookies: `laravel_session`, `symfony`, `ci_session`,
+  `CAKEPHP`, `MoodleSession`, `wordpress_*`, `fe_typo_user`/`be_typo_user`
+  (TYPO3), `roundcube_sessid`, `SQMSESSID`, `osCsid`, `woocommerce_*`,
+  `oc_sessionPassphrase` (Nextcloud/ownCloud), `_simplesaml*`, `XDEBUG_SESSION`,
+  `phpMyAdmin`, …
 
 **URL**
 - A `.php` / `.php5` / `.phtml` (etc.) path extension on the target.
@@ -126,7 +140,9 @@ always explainable, and each distinct signal is counted once.
 **Exposed diagnostics** (deep mode)
 - `phpinfo()` output — detected by title/`PHP Version`/`Zend Engine`; the PHP
   version, extensions and variant are parsed from it.
-- Readable `composer.json` / `composer.lock`.
+- Readable `composer.json` / `composer.lock` and `vendor/composer/installed.json`.
+- Extension/addon status dashboards: `opcache.php`/`apcu.php` (⇒ OPcache/APCu
+  extensions), `adminer.php`, `/phpmyadmin/` (⇒ Adminer/phpMyAdmin tools).
 
 **expose_php easter eggs** (deep mode)
 - The credits GUID (`?=PHPB8B5F2A0-…`) returns a credits page, and the logo
@@ -136,13 +152,19 @@ always explainable, and each distinct signal is counted once.
 
 ### Version, variant, extensions, modules
 
-- **Version** precedence: `phpinfo()` > `X-Powered-By`/`Server` header >
-  easter-egg range. Suffixes (`RC1`, `-dev`, `p1`) are tolerated.
+- **Version** precedence: `phpinfo()` > `X-Powered-By`/`Server` header ≈ Apache
+  server signature > easter-egg range. Suffixes (`RC1`, `-dev`, `p1`) tolerated.
 - **Variant**: `PHP` (default), `HHVM`, or `Zend Server`.
-- **Extensions** (PHP): parsed from `phpinfo()` (a curated catalogue of module
-  names) plus loader strings and the "Zend Engine … with …" line.
+- **Extensions** (PHP): parsed from `phpinfo()` (a broad catalogue including DB
+  drivers, crypto, APM/profiler agents and encoders), loader/error strings, the
+  "Zend Engine … with …" line, and exposed OPcache/APCu dashboards.
 - **Server modules**: tokens from the `Server` banner (`Apache/…`,
   `OpenSSL/…`, `mod_*`).
+- **Addons/tools**: phpMyAdmin, Adminer, Laravel Debugbar, Whoops, Clockwork,
+  WooCommerce, New Relic, … (reported separately from frameworks).
+- **SAPI**: a best-effort guess — `apache (mod_php)`, `php-fpm (behind nginx)`,
+  `php-cgi/php-fpm (PATH_INFO enabled)`, etc. — from the `Server` banner, the
+  presence of `X-Powered-By`, and the PATH_INFO probe.
 - **End of life**: the detected `major.minor` branch is compared against
   PHP.net's published security-support end dates relative to the current date.
 

@@ -442,6 +442,7 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 		in.EasterCredits = fetcher.Get(ctx, base+"/"+php.EasterEggCredits)
 		in.EasterLogo = fetcher.Get(ctx, base+"/"+php.EasterEggLogo)
 		in.Favicon = fetcher.Get(ctx, base+php.FaviconPath)
+		in.PathInfo = fetcher.Get(ctx, base+php.PathInfoProbe)
 	}
 
 	res.PHP = php.Analyze(in)

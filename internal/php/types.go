@@ -61,6 +61,12 @@ type Detection struct {
 	FrameworkVersions map[string]string `json:"framework_versions,omitempty" xml:"-"`
 	Extensions        []string          `json:"extensions,omitempty"`
 	Modules           []string          `json:"modules,omitempty"`
+	// Addons are PHP tools, dev aids and runtime agents that give the stack
+	// away (e.g. phpMyAdmin, Adminer, Laravel Debugbar, Whoops, New Relic).
+	Addons []string `json:"addons,omitempty"`
+	// SAPI is a best-effort guess of the server API (e.g. "apache (mod_php)",
+	// "php-fpm", "php-cgi").
+	SAPI string `json:"sapi,omitempty"`
 
 	// FaviconHash is the Shodan-style mmh3 hash of the site favicon, when one
 	// was fetched (deep mode). Useful for pivoting/fingerprinting.
