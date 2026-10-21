@@ -1,0 +1,21 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+
+# Test / coverage
+coverage.out
+*.test
+
+# Scan outputs
+*.pdf
+*.rtf
+scan.json
+scan.xml
+qphpscan.*
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

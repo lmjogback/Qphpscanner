@@ -1,0 +1,150 @@
+.\" Manpage for qphpscanner.
+.TH QPHPSCANNER 1 "2026-10-21" "qphpscanner 0.1.0" "User Commands"
+.SH NAME
+qphpscanner \- detect PHP-backed network services, collect evidence and report
+.SH SYNOPSIS
+.B qphpscanner
+[\fIoptions\fR] \fItarget\fR [\fItarget\fR ...]
+.br
+.B qphpscanner
+\fB\-\-web\fR [\fB\-\-listen\fR \fIhost:port\fR]
+.br
+.B qphpscanner
+\fB\-\-config\fR \fIfile.yaml\fR
+.SH DESCRIPTION
+.B qphpscanner
+scans network ports and HTTP(S) services to determine whether they are built
+on PHP, collects the supporting evidence, and produces machine output and
+human-readable reports.
+It is a passive fingerprinting tool: it reads banners, headers, cookies and
+response bodies and reasons about them.
+In
+.B deep
+mode it also fingerprints the PHP version and variant, enumerates extensions
+and server modules, evaluates end-of-life status, and correlates known
+version-based vulnerabilities.
+It never attempts to exploit anything.
+.PP
+It also discovers and parses a published RFC 9116
+.I security.txt
+and includes it in all output and reports.
+.PP
+Only scan hosts and networks you own or are explicitly authorised to test.
+.SH TARGETS
+Each target may be a URL
+.RB ( https://example.com/app.php ),
+an IPv4 or IPv6 literal
+.RB ( 203.0.113.10 ,
+.BR 2001:db8::1 ),
+a CIDR block
+.RB ( 10.0.0.0/24 ),
+a dashed range
+.RB ( 192.168.1.10-20
+or
+.BR 10.0.0.1-10.0.0.50 ),
+a per-octet wildcard
+.RB ( 192.168.1.* ,
+.BR 10.0.*.* ),
+or a hostname.
+A URL target's scheme, port and path are honoured and override the port set.
+.SH OPTIONS
+.TP
+.BI \-\-mode " detect|deep"
+Scan depth. \fBdetect\fR (default) only decides whether a service is PHP;
+\fBdeep\fR additionally fingerprints version, extensions/modules and
+correlates vulnerabilities.
+.TP
+.BI \-\-ports " spec"
+Ports to check: a single port, a comma-separated list, inclusive ranges, or a
+mixture (e.g. \fB80,443,8000-8100\fR). Default: a built-in common-web-port set.
+.TP
+.BI \-\-tls " auto|on|off"
+TLS handling. \fBauto\fR (default) infers from the port and falls back to the
+other scheme; \fBon\fR forces HTTPS; \fBoff\fR forces HTTP.
+.TP
+.BI \-\-format " text|json|xml"
+Machine-readable scan output format (default \fBtext\fR).
+.TP
+.BI \-\-out " file"
+Write scan output to \fIfile\fR instead of standard output.
+.TP
+.BI \-\-report " text|rtf|pdf"
+Also produce a human-readable report in the given format.
+.TP
+.BI \-\-report\-out " file"
+Write the report to \fIfile\fR (required for \fBrtf\fR and \fBpdf\fR).
+.TP
+.BI \-\-timeout " duration"
+Per-connection timeout, e.g. \fB5s\fR or \fB500ms\fR (default \fB10s\fR).
+.TP
+.BI \-\-concurrency " n"
+Maximum concurrent service probes (default \fB50\fR).
+.TP
+.B \-\-follow
+Follow HTTP redirects while collecting evidence (default \fBtrue\fR).
+.TP
+.B \-\-insecure
+Do not verify TLS certificates.
+.TP
+.B \-\-security\-txt
+Look up and parse /.well-known/security.txt (default \fBtrue\fR).
+.TP
+.B \-\-include\-closed
+Include closed/filtered ports in the output.
+.TP
+.BI \-\-config " file"
+Load settings from a YAML configuration file. Explicit flags override config
+values; positional targets override the config's target list.
+.TP
+.BI \-\-user\-agent " string"
+Override the HTTP User-Agent header.
+.TP
+.BI \-\-max\-hosts " n"
+Maximum hosts a single target spec may expand to.
+.TP
+.B \-\-web
+Run the web GUI instead of a one-shot scan.
+.TP
+.BI \-\-listen " host:port"
+Address for the web GUI (default \fB127.0.0.1:8088\fR).
+.TP
+.B \-\-version
+Print version information and exit.
+.SH OUTPUT
+The scan output (\fB\-\-format\fR) is a machine-readable record of every probed
+service in text, JSON or XML. A report (\fB\-\-report\fR) is a human-readable
+write-up in text, RTF or PDF. Both may be produced in a single run.
+.SH EXIT STATUS
+.TP
+.B 0
+The scan completed.
+.TP
+.B 1
+A fatal error occurred (invalid target or port spec, unreadable config, or an
+I/O error).
+.SH EXAMPLES
+.TP
+Is this service PHP?
+.B qphpscanner example.com
+.TP
+Deep scan with a PDF report:
+.B qphpscanner \-\-mode deep \-\-report\-out report.pdf example.com
+.TP
+Subnet sweep, HTTPS only, JSON to a file:
+.B qphpscanner \-\-tls on \-\-format json \-\-out scan.json 10.0.0.0/28
+.TP
+Launch the web GUI:
+.B qphpscanner \-\-web
+.SH FILES
+.TP
+.I config.example.yaml
+Annotated example configuration shipped with the source.
+.SH SEE ALSO
+Full documentation in
+.IR docs/USAGE.md " and " docs/DESIGN.md .
+.SH CAVEATS
+Vulnerability findings are leads correlated from the detected version only, not
+confirmed by exploitation; many require a specific SAPI or configuration.
+Always verify against the live service before acting.
+.SH AUTHORS
+qphpscanner authors.

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>qphpscanner</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🐘</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🐘</span>
+      <div>
+        <h1>qphpscanner</h1>
+        <p class="tagline">Detect PHP-backed services, collect evidence, report.</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel form-panel" aria-label="Scan configuration">
+      <h2>New scan</h2>
+      <form id="scan-form">
+        <label for="targets">Targets</label>
+        <textarea id="targets" rows="4" placeholder="example.com&#10;https://example.org/app.php&#10;10.0.0.0/24&#10;192.168.1.1-20&#10;2001:db8::1"></textarea>
+        <p class="hint">One per line (or comma separated): URL, IPv4/IPv6, CIDR, 1.2.3.4-9 range, or 1.2.3.* wildcard.</p>
+
+        <div class="grid2">
+          <div>
+            <label for="ports">Ports</label>
+            <input id="ports" type="text" placeholder="80,443,8000-8010">
+            <p class="hint">Blank = common web ports.</p>
+          </div>
+          <div>
+            <label for="concurrency">Concurrency</label>
+            <input id="concurrency" type="number" min="1" max="500" value="50">
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label for="mode">Depth</label>
+            <select id="mode">
+              <option value="detect">detect — is it PHP?</option>
+              <option value="deep">deep — version, extensions, vulns</option>
+            </select>
+          </div>
+          <div>
+            <label for="tls">TLS</label>
+            <select id="tls">
+              <option value="auto">auto (infer from port)</option>
+              <option value="on">on (https)</option>
+              <option value="off">off (http)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label for="timeout">Timeout (s)</label>
+            <input id="timeout" type="number" min="1" max="120" value="10">
+          </div>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="follow" checked> Follow redirects</label>
+            <label class="check"><input type="checkbox" id="securitytxt" checked> Fetch security.txt</label>
+            <label class="check"><input type="checkbox" id="insecure"> Ignore TLS errors</label>
+            <label class="check"><input type="checkbox" id="includeclosed"> Show closed ports</label>
+          </div>
+        </div>
+
+        <button type="submit" id="scan-btn" class="primary">Scan</button>
+        <span id="status" class="status" role="status"></span>
+      </form>
+    </section>
+
+    <section class="panel results-panel" aria-label="Results">
+      <div class="results-head">
+        <h2>Results</h2>
+        <div id="downloads" class="downloads hidden">
+          <span>Download:</span>
+          <a href="/api/download?format=json">JSON</a>
+          <a href="/api/download?format=xml">XML</a>
+          <a href="/api/download?format=text">Text</a>
+          <a href="/api/download?format=rtf">RTF</a>
+          <a href="/api/download?format=pdf">PDF</a>
+        </div>
+      </div>
+      <div id="summary" class="summary"></div>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>qphpscanner — passive PHP fingerprinting &amp; reporting. Scan only systems you are authorised to test.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
