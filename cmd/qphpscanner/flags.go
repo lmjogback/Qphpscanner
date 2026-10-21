@@ -28,6 +28,9 @@ type flags struct {
 	web           bool
 	listen        string
 	showVersion   bool
+	verbose       bool
+	quiet         bool
+	noDNSEnum     bool
 }
 
 func newFlagSet() *flag.FlagSet {
@@ -42,11 +45,12 @@ Usage:
   qphpscanner --config scan.yaml
 
 Targets:
-  URL         https://example.com/app.php
-  IPv4/IPv6   203.0.113.10        2001:db8::1
-  CIDR        10.0.0.0/24         2001:db8::/120
-  Range       192.168.1.10-20     10.0.0.1-10.0.0.50
-  Wildcard    192.168.1.*         10.0.*.*
+  URL           https://example.com/app.php
+  IPv4/IPv6     203.0.113.10        2001:db8::1
+  CIDR          10.0.0.0/24         2001:db8::/120
+  Range         192.168.1.10-20     10.0.0.1-10.0.0.50
+  IP wildcard   192.168.1.*         10.0.*.*
+  DNS wildcard  *.example.com       (enumerates subdomains via certificate transparency)
 
 Options:
 `)
@@ -56,6 +60,7 @@ Examples:
   qphpscanner example.com
   qphpscanner --mode deep --ports 80,443,8080 --report-out report.pdf example.com
   qphpscanner --tls on --format json --out scan.json 10.0.0.0/28
+  qphpscanner --verbose '*.example.com'
   qphpscanner --web --listen 127.0.0.1:8088
 `)
 	}
@@ -83,6 +88,11 @@ func bindFlags(fs *flag.FlagSet) *flags {
 	fs.BoolVar(&f.web, "web", false, "run the web GUI instead of a one-shot scan")
 	fs.StringVar(&f.listen, "listen", "127.0.0.1:8088", "web GUI listen address (with --web)")
 	fs.BoolVar(&f.showVersion, "version", false, "print version and exit")
+	fs.BoolVar(&f.verbose, "verbose", false, "print per-host/service progress detail (open/closed ports, PHP verdicts)")
+	fs.BoolVar(&f.verbose, "v", false, "shorthand for --verbose")
+	fs.BoolVar(&f.quiet, "quiet", false, "suppress progress output")
+	fs.BoolVar(&f.quiet, "q", false, "shorthand for --quiet")
+	fs.BoolVar(&f.noDNSEnum, "no-dns-enum", false, "disable '*.domain' subdomain enumeration")
 
 	fs.SetOutput(os.Stderr)
 	return f

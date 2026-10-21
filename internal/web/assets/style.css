@@ -190,4 +190,48 @@ details > summary { cursor: pointer; font-size: .82rem; color: var(--accent-2); 
 .empty { color: var(--text-dim); font-style: italic; padding: 20px 0; }
 .error { color: var(--red); font-weight: 600; }
 
+/* progress */
+.progress { margin: 14px 0; }
+.progress-bar {
+  height: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width .2s ease;
+}
+.progress-text { margin-top: 6px; font-size: .82rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.progress-log {
+  margin-top: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: .76rem;
+  color: var(--text-dim);
+}
+.log-line { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* history */
+.history-wrap { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 14px; }
+.history-wrap > h3 { margin: 0 0 10px; font-size: .95rem; color: var(--text-dim); }
+.history-entry {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+}
+.history-entry > summary { font-size: .84rem; font-variant-numeric: tabular-nums; }
+.history-targets { font-size: .76rem; color: var(--text-dim); margin: 6px 0 2px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.history-body { margin-top: 10px; }
+
 .footer { padding: 16px 24px; color: var(--text-dim); font-size: .78rem; border-top: 1px solid var(--border); }

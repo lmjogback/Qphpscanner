@@ -2,12 +2,14 @@ package scanner
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rom/qphpscanner/internal/dnsenum"
 	"github.com/rom/qphpscanner/internal/php"
 	"github.com/rom/qphpscanner/internal/portspec"
 	"github.com/rom/qphpscanner/internal/probe"
@@ -43,6 +45,16 @@ type Options struct {
 	SecurityTxt     bool
 	IncludeClosed   bool
 	MaxHostsPerSpec int
+
+	// OnProgress, when set, receives incremental progress events.
+	OnProgress ProgressFunc
+	// DisableDNSEnum turns off "*.domain" subdomain enumeration.
+	DisableDNSEnum bool
+	// Enumerator overrides the default Certificate Transparency enumerator
+	// (primarily for testing).
+	Enumerator SubdomainEnumerator
+	// VerifySubdomains keeps only discovered subdomains that resolve in DNS.
+	VerifySubdomains bool
 }
 
 // withDefaults fills unset options with sensible values.
@@ -88,7 +100,7 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 	opts = opts.withDefaults()
 	start := time.Now()
 
-	endpoints, err := target.ExpandAll(specs, target.ExpandOptions{MaxHosts: opts.MaxHostsPerSpec})
+	endpoints, err := expandTargets(ctx, specs, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +137,11 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 
 	// Worker pool.
 	results := make([]ServiceResult, len(jobs))
+	total := len(jobs)
 	sem := make(chan struct{}, opts.Concurrency)
 	var wg sync.WaitGroup
+	var progMu sync.Mutex
+	doneCount := 0
 	for i := range jobs {
 		select {
 		case <-ctx.Done():
@@ -138,7 +153,14 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[idx] = scanService(ctx, fetcher, jobs[idx], opts)
+			res := scanService(ctx, fetcher, jobs[idx], opts)
+			results[idx] = res
+			if opts.OnProgress != nil {
+				progMu.Lock()
+				doneCount++
+				opts.OnProgress(serviceEvent(res, doneCount, total))
+				progMu.Unlock()
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -177,6 +199,68 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 
 	out.Summary = summarise(results, hostOrder, opts)
 	return out, nil
+}
+
+// expandTargets turns raw specs into endpoints, resolving DNS wildcards
+// ("*.example.com") via subdomain enumeration. Enumeration failures are
+// reported through progress and skipped rather than aborting the whole scan.
+func expandTargets(ctx context.Context, specs []string, opts Options) ([]target.Endpoint, error) {
+	var eps []target.Endpoint
+	for _, spec := range specs {
+		if domain, ok := target.IsDNSWildcard(spec); ok {
+			if opts.DisableDNSEnum {
+				emitEnum(opts, "skipping DNS wildcard "+spec+" (enumeration disabled)")
+				continue
+			}
+			enum := opts.Enumerator
+			if enum == nil {
+				d := dnsenum.New()
+				d.Verify = opts.VerifySubdomains
+				if opts.MaxHostsPerSpec > 0 {
+					d.MaxHosts = opts.MaxHostsPerSpec
+				}
+				enum = d
+			}
+			emitEnum(opts, "enumerating subdomains for "+domain+" via certificate transparency…")
+			hosts, err := enum.Enumerate(ctx, domain)
+			if err != nil {
+				emitEnum(opts, "subdomain enumeration for "+domain+" failed: "+err.Error())
+				continue
+			}
+			emitEnum(opts, fmt.Sprintf("found %d host(s) for %s", len(hosts), domain))
+			for _, h := range hosts {
+				eps = append(eps, target.Endpoint{Input: spec, Host: h, Path: "/"})
+			}
+			continue
+		}
+		e, err := target.Expand(spec, target.ExpandOptions{MaxHosts: opts.MaxHostsPerSpec})
+		if err != nil {
+			return nil, fmt.Errorf("target %q: %w", spec, err)
+		}
+		eps = append(eps, e...)
+	}
+	return eps, nil
+}
+
+func emitEnum(opts Options, msg string) {
+	if opts.OnProgress != nil {
+		opts.OnProgress(ProgressEvent{Phase: "enumerate", Message: msg})
+	}
+}
+
+func serviceEvent(r ServiceResult, done, total int) ProgressEvent {
+	ev := ProgressEvent{
+		Phase: "service", Done: done, Total: total,
+		Host: r.Host, Port: r.Port, Open: r.PortOpen, Err: r.Error,
+	}
+	if r.HTTP != nil {
+		ev.HTTP = true
+	}
+	if r.PHP != nil {
+		ev.PHPVerdict = string(r.PHP.Verdict)
+		ev.Version = r.PHP.Version
+	}
+	return ev
 }
 
 func summarise(results []ServiceResult, hosts []string, opts Options) Summary {

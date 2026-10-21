@@ -33,6 +33,7 @@ internal/
   probe              low-level TCP connect checks and bounded HTTP(S) fetches
   php                PHP detection, fingerprinting, vuln correlation (the core)
   securitytxt        RFC 9116 security.txt discovery and parsing
+  dnsenum            subdomain discovery for "*.domain" via Certificate Transparency
   scanner            orchestration: expand → connect → probe → analyse → aggregate
   report             rendering: text, JSON, XML, RTF, PDF (from one doc model)
   config             YAML-subset parser and typed configuration
@@ -68,6 +69,18 @@ targets ──► target.Expand ──► endpoints (host [+scheme/port/path])
 A bounded worker pool (`--concurrency`) runs the per-service work. Redirects
 are followed manually so headers and cookies from **every hop** become
 evidence; response bodies are read up to a byte cap.
+
+**DNS wildcards.** A `*.example.com` target is expanded before scanning by the
+`dnsenum` package, which queries Certificate Transparency (crt.sh) for names
+issued under the domain, normalises and de-duplicates them, and optionally
+filters to names that resolve. The resulting hosts are scanned like any other.
+
+**Progress.** `scanner.Options.OnProgress` receives `ProgressEvent`s: one per
+enumeration step and one per completed service probe (carrying a monotonic
+`done`/`total` counter, the host/port, open state and any PHP verdict). The
+scanner serialises these callbacks. The CLI renders them as an in-place counter
+or, with `--verbose`, a line per service; the web server forwards each event to
+the browser as a line of NDJSON, ending with the final result.
 
 ## Detection model
 
@@ -201,3 +214,5 @@ the tool dependency-free. Booleans are parsed as pointers so the CLI can tell
   server-side scan is time-bounded.
 - Response bodies are read up to a byte cap to bound memory.
 - Target expansion is capped per spec to prevent accidental massive sweeps.
+- Subdomain enumeration reads only public Certificate Transparency data; it
+  does not brute-force DNS or probe the target during discovery.

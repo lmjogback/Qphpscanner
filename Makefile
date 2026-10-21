@@ -65,11 +65,20 @@ test:
 test-race:
 	$(GO) test -race ./...
 
-## cover: run tests and open a coverage summary
+## cover: run tests and print a coverage summary
 .PHONY: cover
 cover:
 	$(GO) test -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -1
+
+## cover-check: fail if total statement coverage is below MIN (default 85)
+MIN ?= 85
+.PHONY: cover-check
+cover-check:
+	$(GO) test -coverprofile=coverage.out ./... >/dev/null
+	@total=$$($(GO) tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$$3); print $$3}'); \
+	echo "total coverage: $$total% (min $(MIN)%)"; \
+	awk -v t=$$total -v m=$(MIN) 'BEGIN { exit (t+0 < m+0) }' || { echo "coverage below $(MIN)%"; exit 1; }
 
 ## vet: run go vet
 .PHONY: vet

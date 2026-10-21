@@ -47,11 +47,19 @@ Each target may be any of:
 | Dashed range (last octet) | `192.168.1.10-20` |
 | Dashed range (full) | `10.0.0.1-10.0.0.50` |
 | Per-octet wildcard | `192.168.1.*`, `10.0.*.*` |
+| DNS wildcard | `*.example.com` |
 | Hostname | `example.com` |
 
 When a target is a **URL**, its scheme, port and path are honoured: that exact
 endpoint is scanned (and `--ports` is ignored for it). All other target forms
 are scanned across the selected port set.
+
+A **DNS wildcard** (`*.example.com`) is expanded by querying Certificate
+Transparency logs (crt.sh) for names issued under the domain; the discovered
+hosts are then scanned across the selected ports. Quote it in a shell
+(`'*.example.com'`) so the shell does not glob it. Disable this with
+`--no-dns-enum`. If the lookup fails (e.g. the CT service is unreachable), the
+spec is skipped with a progress message and the rest of the scan continues.
 
 A single spec is capped at `--max-hosts` (default 65 536) expanded hosts to
 guard against an accidental huge range.
@@ -124,6 +132,32 @@ format is inferred from the file extension.
 The scan output (`--format`) and the report (`--report`) are independent — you
 can request both in one run.
 
+## Progress and verbosity
+
+By default qphpscanner shows live progress on **stderr** (so it never mixes
+with machine output on stdout):
+
+- On a terminal, a single counter line is redrawn in place:
+  `scanning… 128/2560 (open 12, php 4)`.
+- When stderr is redirected, the counter is emitted as occasional full lines
+  instead.
+- Subdomain-enumeration steps are printed as `[*] …` lines.
+
+`--verbose` (or `-v`) replaces the counter with one line per service — open
+ports, PHP verdicts and versions, and closed/filtered ports — plus the
+enumeration steps:
+
+```
+[*] enumerating subdomains for example.com via certificate transparency…
+[*] found 37 host(s) for example.com
+[+] www.example.com:443 open http php=confirmed PHP/8.2.4
+[+] api.example.com:80 open http
+[-] legacy.example.com:80 closed/filtered
+```
+
+`--quiet` (or `-q`) suppresses progress entirely. A one-line summary is always
+printed to stderr when the scan finishes.
+
 ## Configuration file
 
 `--config FILE` loads settings from a small YAML file. See
@@ -144,11 +178,13 @@ qphpscanner --web --listen 0.0.0.0:9000 # bind elsewhere (use with care)
 ```
 
 The GUI offers a form (targets, ports, depth, TLS, timeout, concurrency and
-toggles), renders per-service result cards with colour-coded PHP verdicts,
-evidence and vulnerability leads, and provides one-click downloads of the last
-scan as JSON, XML, text, RTF or PDF. It is bound to localhost by default;
-exposing it to a network makes a scan trigger available to anyone who can reach
-it, so do so only on trusted networks.
+toggles), shows a **progress bar and live feed** while scanning, renders
+per-service result cards with colour-coded PHP verdicts, evidence and
+vulnerability leads, and keeps **previous scans below the current one as
+collapsible entries**. It provides one-click downloads of the latest scan as
+JSON, XML, text, RTF or PDF. It is bound to localhost by default; exposing it
+to a network makes a scan trigger available to anyone who can reach it, so do
+so only on trusted networks.
 
 ### HTTP API
 
@@ -157,7 +193,10 @@ The GUI is backed by a tiny JSON API you can script against:
 - `POST /api/scan` — body is a JSON object with the same fields as the form
   (`targets` array or `targets_text`, `ports`, `mode`, `tls`,
   `timeout_seconds`, `concurrency`, `follow_redirects`, `insecure`,
-  `security_txt`, `include_closed`). Returns `{ "ok": true, "result": {...} }`.
+  `security_txt`, `include_closed`, `no_dns_enum`). The response is a stream of
+  newline-delimited JSON (`application/x-ndjson`): zero or more
+  `{"type":"progress","event":{…}}` lines followed by a final
+  `{"type":"result","result":{…}}` (or `{"type":"error","error":"…"}`).
 - `GET /api/download?format=json|xml|text|rtf|pdf` — renders the most recent
   scan result.
 
