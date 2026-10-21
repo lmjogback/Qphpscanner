@@ -35,8 +35,22 @@ func DeepProbePaths() []string {
 		"/CHANGELOG.txt",
 		"/core/CHANGELOG.txt",
 		"/administrator/manifests/files/joomla.xml",
+		// Extension/addon status dashboards and tooling.
+		"/opcache.php",
+		"/apc.php",
+		"/apcu.php",
+		"/adminer.php",
+		"/phpmyadmin/",
+		"/robots.txt",
+		// Composer artefacts: a readable manifest/package list means a PHP
+		// project; vendor/autoload.php often leaks source when not executed.
+		"/vendor/composer/installed.json",
+		"/vendor/autoload.php",
 	}
 }
+
+// PathInfoProbe is appended to index.php to test PHP PATH_INFO handling.
+const PathInfoProbe = "/index.php/qphpscanner_pathinfo"
 
 // isPHPInfo reports whether a body looks like phpinfo() output.
 func isPHPInfo(body string) bool {

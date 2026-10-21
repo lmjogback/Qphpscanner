@@ -17,17 +17,25 @@ version-based vulnerabilities**. It never attempts to exploit anything.
 
 ## Features
 
-- **PHP detection** from many signals: `X-Powered-By` / `Server` banners,
-  `PHPSESSID` and framework session cookies, `.php`/`.phtml` URL extensions,
-  PHP error/stack-trace output, CMS/framework markers (WordPress, Drupal,
-  Joomla, Laravel, Symfony, Magento, TYPO3, phpBB, MediaWiki, …), exposed
-  `phpinfo()`, exposed Composer manifests, and the classic `expose_php`
-  easter-egg endpoints.
-- **Version, variant, extensions & modules** (deep mode): PHP vs HHVM vs Zend
-  Server; version from headers or `phpinfo()`; extensions (OPcache, Xdebug,
-  ionCube, mysqli, curl, gd, …); web-server modules from the `Server` banner;
-  end-of-life evaluation per release branch; a Shodan-style **favicon mmh3
-  hash** for pivoting.
+- **PHP detection** from many signals: `X-Powered-By` / `Server` banners and
+  **Apache server-signature footers** (which also leak the version),
+  `PHPSESSID` and a large set of framework/app session cookies (TYPO3,
+  Roundcube, WooCommerce, osCommerce, Nextcloud, …), `.php`/`.phtml` URL
+  extensions, a broad set of **PHP error/stack-trace patterns**, **leaked PHP
+  source** (`<?php`), "Powered by …" footers and CMS/framework markers
+  (WordPress, Drupal, Joomla, Laravel, Symfony, Magento, TYPO3, phpBB, Discuz,
+  Bitrix, MediaWiki, …), **PATH_INFO behaviour** (`index.php/…`), exposed
+  `phpinfo()` / Composer artefacts, and the classic `expose_php` easter eggs.
+  A best-effort **SAPI** guess (mod_php / php-fpm / php-cgi) is included.
+- **Version, variant, extensions, modules & addons** (deep mode): PHP vs HHVM
+  vs Zend Server; version from headers, `phpinfo()` or server signatures; an
+  extended extension catalogue (OPcache, Xdebug, ionCube, SourceGuardian, APM
+  agents like New Relic/Blackfire/Tideways, redis, imagick, …) parsed from
+  `phpinfo()`, loader messages and exposed status dashboards
+  (`opcache.php`/`apcu.php`); web-server modules from the `Server` banner;
+  **addons/tools** (phpMyAdmin, Adminer, Laravel Debugbar, Whoops, Clockwork,
+  WooCommerce, …); end-of-life evaluation; a Shodan-style **favicon mmh3
+  hash**.
 - **CMS core version detection** (deep mode): WordPress / Drupal / Joomla core
   versions from generator tags, `readme.html`, `CHANGELOG.txt` and manifests —
   and their correlated CVEs.

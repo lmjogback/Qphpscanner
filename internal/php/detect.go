@@ -24,6 +24,9 @@ type Input struct {
 	// Favicon is the /favicon.ico response (deep mode), used for a Shodan-style
 	// mmh3 fingerprint hash.
 	Favicon *probe.Response
+	// PathInfo is the response to /index.php/<token> (deep mode): a 200 implies
+	// PHP PATH_INFO handling (cgi/fpm), another positive PHP signal.
+	PathInfo *probe.Response
 	// Catalog supplies vulnerability/EOL data. When nil, the built-in default
 	// catalogue is used.
 	Catalog *Catalog
@@ -130,6 +133,17 @@ func Analyze(in Input) *Detection {
 				Detail: "Composer manifest/lock is publicly readable (PHP project)",
 			})
 		}
+		if resp.Status == 200 {
+			detectStatusDashboards(url, body, addEv, addExt, addFw)
+		}
+	}
+
+	// --- PATH_INFO behavioural probe ----------------------------------------
+	if p := in.PathInfo; p != nil && p.Err == "" && p.Status == 200 {
+		addEv(Evidence{
+			Signal: "behavior.path-info", Source: p.FinalURL, Weight: 35,
+			Detail: "index.php/<path> is served (PHP PATH_INFO handling)",
+		})
 	}
 
 	// --- Easter eggs --------------------------------------------------------
@@ -156,10 +170,16 @@ func Analyze(in Input) *Detection {
 		d.Variant = "PHP"
 	}
 
+	d.Frameworks, d.Addons = partitionAddons(d.Frameworks)
 	sort.Strings(d.Frameworks)
+	sort.Strings(d.Addons)
 	sort.Strings(d.Extensions)
 	sort.Strings(d.Modules)
 	sortEvidence(d.Evidence)
+
+	if d.IsPHP {
+		d.SAPI = inferSAPI(in.Root, in.PathInfo != nil && in.PathInfo.Err == "" && in.PathInfo.Status == 200)
+	}
 
 	if in.Deep && d.IsPHP {
 		cat := in.Catalog
@@ -265,6 +285,18 @@ func analyzeResponse(
 				addExt(lt.module)
 			}
 		}
+		// Version from an Apache/server signature footer (default error pages).
+		if m := reApacheSig.FindStringSubmatch(body); m != nil {
+			setVersion(m[1], "Apache server signature", 2)
+			setVariant("PHP")
+		} else if m := reServerSig.FindStringSubmatch(body); m != nil {
+			setVersion(m[1], "server signature", 2)
+			setVariant("PHP")
+		}
+		// "Powered by <app>" footer names a PHP application.
+		if m := rePoweredBy.FindStringSubmatch(body); m != nil {
+			addFw(canonicalApp(m[1]))
+		}
 		if m := reGenerator.FindStringSubmatch(body); m != nil {
 			gen := m[1]
 			addEv(Evidence{
@@ -343,6 +375,96 @@ func frameworkFromGenerator(gen string) string {
 		return "PrestaShop"
 	default:
 		return ""
+	}
+}
+
+// canonicalApp normalises a "Powered by" app name to a stable label.
+func canonicalApp(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "simple machines":
+		return "SMF"
+	case "concrete5":
+		return "ConcreteCMS"
+	default:
+		return strings.TrimSpace(name)
+	}
+}
+
+// addonNames are technologies reported under Addons rather than Frameworks:
+// PHP tools, dev aids and runtime agents.
+var addonNames = map[string]bool{
+	"Whoops":                true,
+	"Laravel Debugbar":      true,
+	"New Relic (PHP agent)": true,
+	"Clockwork":             true,
+	"Adminer":               true,
+	"phpMyAdmin":            true,
+	"WooCommerce":           true,
+	"Polylang":              true,
+	"K2":                    true,
+	"LiteSpeed Cache":       true,
+}
+
+// partitionAddons moves addon technologies out of frameworks into addons.
+func partitionAddons(frameworks []string) (fw, addons []string) {
+	for _, f := range frameworks {
+		if addonNames[f] {
+			addons = append(addons, f)
+		} else {
+			fw = append(fw, f)
+		}
+	}
+	return fw, addons
+}
+
+// inferSAPI makes a best-effort guess at the PHP server API from the response.
+func inferSAPI(root *probe.Response, pathInfo bool) string {
+	server := strings.ToLower(strings.Join(root.HeaderValues("Server"), " "))
+	poweredBy := root.HeaderGet("X-Powered-By")
+	hasPHPBanner := reVersion.MatchString(server)
+	switch {
+	case strings.Contains(server, "apache") && hasPHPBanner:
+		return "apache (mod_php)"
+	case strings.Contains(server, "apache"):
+		return "apache (mod_php or php-fpm)"
+	case strings.Contains(server, "nginx") || strings.Contains(server, "openresty"):
+		return "php-fpm (behind nginx)"
+	case strings.Contains(server, "litespeed"):
+		return "litespeed (lsapi)"
+	case strings.Contains(server, "caddy"):
+		return "php-fpm (behind caddy)"
+	case pathInfo && poweredBy != "":
+		return "php-cgi/php-fpm (PATH_INFO enabled)"
+	default:
+		return ""
+	}
+}
+
+// detectStatusDashboards recognises exposed status/management pages that reveal
+// PHP extensions (OPcache, APCu) or PHP tools (Adminer, phpMyAdmin, Composer).
+func detectStatusDashboards(url, body string, addEv func(Evidence), addExt, addFw func(string)) {
+	lu := strings.ToLower(url)
+
+	if contains(body, "opcache_get_status") ||
+		(containsFold(body, "opcache") && (containsFold(body, "cached scripts") || containsFold(body, "opcache statistics") || containsFold(body, "opcache_reset"))) {
+		addExt("Zend OPcache")
+		addEv(Evidence{Signal: "diag.opcache-dashboard", Source: url, Weight: 30, Detail: "OPcache status page exposed"})
+	}
+	if containsFold(body, "apcu_cache_info") || containsFold(body, "apcu version") {
+		addExt("apcu")
+		addEv(Evidence{Signal: "diag.apcu-dashboard", Source: url, Weight: 30, Detail: "APCu status page exposed"})
+	}
+	if (strings.Contains(lu, "adminer") && containsFold(body, "adminer")) ||
+		(containsFold(body, "adminer") && containsFold(body, "<form") && containsFold(body, "login")) {
+		addFw("Adminer")
+		addEv(Evidence{Signal: "diag.adminer", Source: url, Weight: 45, Detail: "Adminer database tool exposed"})
+	}
+	if strings.Contains(lu, "phpmyadmin") || (containsFold(body, "phpmyadmin") && containsFold(body, "pma_")) {
+		addFw("phpMyAdmin")
+		addEv(Evidence{Signal: "diag.phpmyadmin", Source: url, Weight: 45, Detail: "phpMyAdmin exposed"})
+	}
+	if strings.Contains(lu, "installed.json") && (strings.Contains(body, "\"packages\"") || strings.Contains(body, "\"name\"")) {
+		addEv(Evidence{Signal: "diag.composer-installed", Source: url, Weight: 45, Detail: "Composer installed packages exposed (vendor/composer/installed.json)"})
 	}
 }
 

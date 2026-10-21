@@ -173,11 +173,17 @@ func renderPHP(d *document, det *php.Detection) {
 		}
 		d.kv("Lifecycle", label)
 	}
+	if det.SAPI != "" {
+		d.kv("SAPI (guess)", det.SAPI)
+	}
 	if len(det.Frameworks) > 0 {
 		d.kv("Frameworks", strings.Join(det.Frameworks, ", "))
 	}
 	for _, fw := range sortedKeys(det.FrameworkVersions) {
 		d.kv("  "+fw+" version", det.FrameworkVersions[fw])
+	}
+	if len(det.Addons) > 0 {
+		d.kv("Addons / tools", strings.Join(det.Addons, ", "))
 	}
 	if det.FaviconHash != "" {
 		d.kv("Favicon hash", det.FaviconHash+" (mmh3)")

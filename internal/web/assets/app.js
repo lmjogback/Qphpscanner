@@ -270,6 +270,7 @@ function renderService(svc) {
   const php = svc.php;
   if (php) {
     if (php.variant) add("Variant", php.variant);
+    if (php.sapi) add("SAPI (guess)", php.sapi);
     if (php.version) add("Version", php.version + (php.version_source ? " (via " + php.version_source + ")" : ""));
     if (php.framework_versions) {
       for (const fw of Object.keys(php.framework_versions)) add(fw + " version", php.framework_versions[fw]);
@@ -290,6 +291,7 @@ function renderService(svc) {
 
   if (php) {
     if (php.frameworks && php.frameworks.length) card.appendChild(chips("Frameworks", php.frameworks));
+    if (php.addons && php.addons.length) card.appendChild(chips("Addons / tools", php.addons));
     if (php.extensions && php.extensions.length) card.appendChild(chips("Extensions", php.extensions));
     if (php.modules && php.modules.length) card.appendChild(chips("Server modules", php.modules));
     if (php.vulnerabilities && php.vulnerabilities.length) card.appendChild(renderVulns(php.vulnerabilities));
