@@ -71,29 +71,25 @@ type scanRequest struct {
 	Insecure       bool     `json:"insecure"`
 	SecurityTxt    bool     `json:"security_txt"`
 	IncludeClosed  bool     `json:"include_closed"`
+	NoDNSEnum      bool     `json:"no_dns_enum"`
 }
 
-type scanResponse struct {
-	OK     bool                `json:"ok"`
-	Error  string              `json:"error,omitempty"`
-	Result *scanner.ScanResult `json:"result,omitempty"`
+// streamMsg is one line of the NDJSON response stream.
+type streamMsg struct {
+	Type   string                 `json:"type"` // "progress" | "result" | "error"
+	Event  *scanner.ProgressEvent `json:"event,omitempty"`
+	Result *scanner.ScanResult    `json:"result,omitempty"`
+	Error  string                 `json:"error,omitempty"`
 }
 
-func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	var req scanRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, scanResponse{Error: "invalid request: " + err.Error()})
-		return
-	}
-
-	targets := req.Targets
+// buildOptions turns a request into scanner options, or returns a user error.
+func (s *Server) buildOptions(req scanRequest) (scanner.Options, []string, error) {
+	targets := append([]string{}, req.Targets...)
 	targets = append(targets, splitTargets(req.TargetsText)...)
 	targets = cleanTargets(targets)
 	if len(targets) == 0 {
-		writeJSON(w, http.StatusBadRequest, scanResponse{Error: "no targets supplied"})
-		return
+		return scanner.Options{}, nil, fmt.Errorf("no targets supplied")
 	}
-
 	opts := scanner.Options{
 		Mode:            normMode(req.Mode),
 		TLSMode:         normTLS(req.TLS),
@@ -102,27 +98,65 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		SecurityTxt:     req.SecurityTxt,
 		IncludeClosed:   req.IncludeClosed,
 		Concurrency:     req.Concurrency,
+		DisableDNSEnum:  req.NoDNSEnum,
 		MaxHostsPerSpec: s.maxTargets,
 	}
 	if req.Ports != "" {
 		ports, err := parsePortsField(req.Ports)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, scanResponse{Error: err.Error()})
-			return
+			return scanner.Options{}, nil, err
 		}
 		opts.Ports = ports
 	}
 	if req.TimeoutSeconds > 0 {
 		opts.Timeout = time.Duration(req.TimeoutSeconds) * time.Second
 	}
+	return opts, targets, nil
+}
 
-	// Bound total scan time for a GUI request.
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+// handleScan runs a scan and streams NDJSON: a line per progress event
+// followed by a final {"type":"result", ...} line (or {"type":"error"}).
+func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	var req scanRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, streamMsg{Type: "error", Error: "invalid request: " + err.Error()})
+		return
+	}
+	opts, targets, err := s.buildOptions(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, streamMsg{Type: "error", Error: err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	var writeMu sync.Mutex
+	send := func(m streamMsg) {
+		writeMu.Lock()
+		_ = enc.Encode(m)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		writeMu.Unlock()
+	}
+
+	opts.OnProgress = func(ev scanner.ProgressEvent) {
+		e := ev
+		send(streamMsg{Type: "progress", Event: &e})
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
 	result, err := scanner.Scan(ctx, targets, opts)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, scanResponse{Error: err.Error()})
+		send(streamMsg{Type: "error", Error: err.Error()})
 		return
 	}
 
@@ -130,7 +164,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	s.last = result
 	s.mu.Unlock()
 
-	writeJSON(w, http.StatusOK, scanResponse{OK: true, Result: result})
+	send(streamMsg{Type: "result", Result: result})
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {

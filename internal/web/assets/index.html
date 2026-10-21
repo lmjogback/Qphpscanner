@@ -86,8 +86,18 @@
           <a href="/api/download?format=pdf">PDF</a>
         </div>
       </div>
+      <div id="progress" class="progress hidden">
+        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+        <div id="progress-text" class="progress-text"></div>
+        <div id="progress-log" class="progress-log" aria-live="polite"></div>
+      </div>
       <div id="summary" class="summary"></div>
       <div id="results"></div>
+
+      <div id="history-wrap" class="history-wrap hidden">
+        <h3>Previous scans</h3>
+        <div id="history"></div>
+      </div>
     </section>
   </main>
 

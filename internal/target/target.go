@@ -43,6 +43,36 @@ func (o ExpandOptions) maxHosts() int {
 	return DefaultMaxHosts
 }
 
+// IsDNSWildcard reports whether spec is a DNS wildcard of the form
+// "*.example.com" and, if so, returns the parent domain ("example.com").
+// These require active subdomain enumeration and are handled by the scanner,
+// not by Expand.
+func IsDNSWildcard(spec string) (domain string, ok bool) {
+	spec = strings.TrimSpace(spec)
+	if !strings.HasPrefix(spec, "*.") {
+		return "", false
+	}
+	domain = strings.TrimPrefix(spec, "*.")
+	if domain == "" || strings.ContainsAny(domain, "*/ \t") {
+		return "", false
+	}
+	// Must look like a DNS name (contains a dot and a letter), not an IP.
+	if !strings.Contains(domain, ".") {
+		return "", false
+	}
+	hasLetter := false
+	for _, r := range domain {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return "", false
+	}
+	return domain, true
+}
+
 // Expand turns a single target spec into one or more endpoints.
 func Expand(spec string, opts ExpandOptions) ([]Endpoint, error) {
 	spec = strings.TrimSpace(spec)

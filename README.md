@@ -34,16 +34,22 @@ version-based vulnerabilities**. It never attempts to exploit anything.
 - **security.txt** (RFC 9116): discovers and parses `/.well-known/security.txt`
   and surfaces it in every output and report.
 - **Flexible targets**: single URL, IPv4/IPv6 literal, CIDR block, dashed
-  ranges (`1.2.3.4-9`, `1.2.3.4-1.2.3.9`) and per-octet wildcards (`1.2.3.*`).
+  ranges (`1.2.3.4-9`, `1.2.3.4-1.2.3.9`), per-octet wildcards (`1.2.3.*`), and
+  **DNS wildcards** (`*.example.com`) that enumerate subdomains via
+  Certificate Transparency.
 - **Flexible ports**: single, comma lists and ranges, mixable
   (`80,443,8000-8100`).
 - **TLS control**: `auto` (infer from port), `on`, or `off`.
 - **Two scan depths**: `detect` (is it PHP?) and `deep` (full fingerprint).
+- **Live progress**: a running counter by default (updated in place on a
+  terminal) and a `--verbose` mode that reports every host/port outcome;
+  the web GUI shows a progress bar and a live feed.
 - **Output formats**: plain **text**, **JSON**, **XML**.
 - **Report formats**: **text**, **RTF**, **PDF** (both RTF and PDF are written
   by hand — see below).
 - **YAML config file** support.
-- **CLI *and* a web GUI** with a clean, usable interface.
+- **CLI *and* a web GUI** with a clean, usable interface and a collapsible
+  history of previous scans.
 - **Zero external dependencies** — the entire tool builds from the Go standard
   library, including the YAML parser and the RTF/PDF writers.
 
@@ -69,6 +75,9 @@ qphpscanner --mode deep --ports 80,443,8080 --report-out report.pdf example.com
 
 # Scan a subnet, force HTTPS, emit JSON to a file:
 qphpscanner --tls on --format json --out scan.json 10.0.0.0/28
+
+# Enumerate subdomains of a domain and scan them, with per-host detail:
+qphpscanner --verbose '*.example.com'
 
 # Launch the web GUI:
 qphpscanner --web           # then open http://127.0.0.1:8088/
@@ -97,6 +106,9 @@ qphpscanner --config scan.yaml
 | `--insecure` | skip TLS verification |
 | `--security-txt` | fetch security.txt (default true) |
 | `--include-closed` | include closed ports in output |
+| `--verbose` / `-v` | per-host/port progress detail |
+| `--quiet` / `-q` | suppress progress output |
+| `--no-dns-enum` | disable `*.domain` subdomain enumeration |
 | `--config FILE` | load a YAML config |
 | `--web` / `--listen` | run the web GUI / its address |
 | `--version` | print version |
@@ -110,9 +122,11 @@ A man page is in [`docs/qphpscanner.1`](docs/qphpscanner.1).
 `qphpscanner --web` serves a single-page interface (bound to localhost by
 default) for configuring and running scans, browsing per-service results with
 colour-coded PHP verdicts, evidence and vulnerability leads, and downloading
-the results as JSON/XML/text or a RTF/PDF report. All scan-derived text is
-inserted into the DOM as text (never HTML), so hostile response data cannot be
-reflected into the page.
+the results as JSON/XML/text or a RTF/PDF report. While a scan runs it shows a
+**progress bar and a live feed** (the scan endpoint streams NDJSON), and each
+completed scan is kept **below the current one as a collapsible entry** so you
+can revisit earlier runs. All scan-derived text is inserted into the DOM as
+text (never HTML), so hostile response data cannot be reflected into the page.
 
 ## Output & report formats
 

@@ -45,6 +45,9 @@ or
 a per-octet wildcard
 .RB ( 192.168.1.* ,
 .BR 10.0.*.* ),
+a DNS wildcard
+.RB ( *.example.com ,
+which enumerates subdomains via Certificate Transparency),
 or a hostname.
 A URL target's scheme, port and path are honoured and override the port set.
 .SH OPTIONS
@@ -92,6 +95,16 @@ Look up and parse /.well-known/security.txt (default \fBtrue\fR).
 .B \-\-include\-closed
 Include closed/filtered ports in the output.
 .TP
+.B \-\-verbose ", " \-v
+Print a line per host/port as it is probed (open/closed, PHP verdict, version),
+plus subdomain-enumeration steps.
+.TP
+.B \-\-quiet ", " \-q
+Suppress progress output.
+.TP
+.B \-\-no\-dns\-enum
+Disable subdomain enumeration for \fB*.domain\fR targets.
+.TP
 .BI \-\-config " file"
 Load settings from a YAML configuration file. Explicit flags override config
 values; positional targets override the config's target list.
@@ -132,6 +145,9 @@ Deep scan with a PDF report:
 .TP
 Subnet sweep, HTTPS only, JSON to a file:
 .B qphpscanner \-\-tls on \-\-format json \-\-out scan.json 10.0.0.0/28
+.TP
+Enumerate and scan subdomains with per-host detail:
+.B qphpscanner \-\-verbose '*.example.com'
 .TP
 Launch the web GUI:
 .B qphpscanner \-\-web

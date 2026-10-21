@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,7 +38,11 @@ func main() {
 func run(args []string) error {
 	fs := newFlagSet()
 	f := bindFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	positionals, err := parseArgs(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if f.showVersion {
@@ -58,7 +63,7 @@ func run(args []string) error {
 		cfg = c
 	}
 
-	opts, outFmt, outFile, repFmt, repFile, targets, webEnabled, listen, err := resolve(f, set, cfg, fs.Args())
+	opts, outFmt, outFile, repFmt, repFile, targets, webEnabled, listen, err := resolve(f, set, cfg, positionals)
 	if err != nil {
 		return err
 	}
@@ -75,10 +80,15 @@ func run(args []string) error {
 		return fmt.Errorf("no targets given (pass targets as arguments, in --config, or use --web)")
 	}
 
+	reporter := newProgressReporter(os.Stderr, f.verbose, f.quiet)
+	opts.OnProgress = reporter.handle
+	opts.DisableDNSEnum = f.noDNSEnum
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	result, err := scanner.Scan(ctx, targets, opts)
+	reporter.finish()
 	if err != nil {
 		return err
 	}
@@ -318,6 +328,26 @@ func ext(file string) string {
 		return file[i+1:]
 	}
 	return ""
+}
+
+// parseArgs parses flags that may appear before, between or after positional
+// target arguments. The standard flag package stops at the first non-flag
+// argument, so we parse iteratively, collecting positionals between flag runs.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positionals = append(positionals, rest[0])
+		rest = rest[1:]
+	}
+	return positionals, nil
 }
 
 func boolVal(p *bool, def bool) bool {

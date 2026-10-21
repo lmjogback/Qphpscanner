@@ -1,7 +1,8 @@
 "use strict";
 
 // qphpscanner web UI. All scan-derived text is inserted with textContent to
-// avoid injecting attacker-controlled response data into the DOM.
+// avoid injecting attacker-controlled response data into the DOM. The scan
+// endpoint streams NDJSON (one progress event per line, then a result line).
 
 const $ = (id) => document.getElementById(id);
 
@@ -11,6 +12,15 @@ const scanBtn = $("scan-btn");
 const summaryEl = $("summary");
 const resultsEl = $("results");
 const downloadsEl = $("downloads");
+const progressEl = $("progress");
+const progressFill = $("progress-fill");
+const progressText = $("progress-text");
+const progressLog = $("progress-log");
+const historyWrap = $("history-wrap");
+const historyEl = $("history");
+
+let currentResult = null;
+const scanHistory = [];
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -38,10 +48,16 @@ async function runScan() {
   };
 
   scanBtn.disabled = true;
-  setStatus("Scanning…");
+  setStatus("");
   resultsEl.replaceChildren();
   summaryEl.replaceChildren();
   downloadsEl.classList.add("hidden");
+  startProgress();
+
+  let openCount = 0;
+  let phpCount = 0;
+  let errMsg = null;
+  let result = null;
 
   try {
     const resp = await fetch("/api/scan", {
@@ -49,20 +65,109 @@ async function runScan() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await resp.json();
-    if (!resp.ok || !data.ok) {
+
+    if (!resp.ok) {
+      let data = {};
+      try { data = await resp.json(); } catch (_) { /* ignore */ }
       throw new Error(data.error || ("HTTP " + resp.status));
     }
-    render(data.result);
-    const n = data.result.summary.hosts_scanned;
-    setStatus(`Done in ${data.result.meta.duration_ms} ms · ${n} host(s).`);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    const handle = (msg) => {
+      if (msg.type === "progress") {
+        const ev = msg.event;
+        if (ev.phase === "enumerate") {
+          logLine(ev.message);
+        } else {
+          if (ev.open) openCount++;
+          if (ev.php_verdict && ev.php_verdict !== "none") phpCount++;
+          updateProgress(ev, openCount, phpCount);
+          if (ev.open) {
+            let line = ev.host + ":" + ev.port + " open";
+            if (ev.php_verdict && ev.php_verdict !== "none") {
+              line += " · PHP " + ev.php_verdict + (ev.version ? " " + ev.version : "");
+            }
+            logLine(line);
+          }
+        }
+      } else if (msg.type === "result") {
+        result = msg.result;
+      } else if (msg.type === "error") {
+        errMsg = msg.error;
+      }
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (line) handle(JSON.parse(line));
+      }
+    }
+    if (buf.trim()) handle(JSON.parse(buf.trim()));
+
+    if (errMsg) throw new Error(errMsg);
+    if (!result) throw new Error("scan ended without a result");
+
+    onResult(result);
+    setStatus(`Done in ${result.meta.duration_ms} ms · ${result.summary.hosts_scanned} host(s).`);
     downloadsEl.classList.remove("hidden");
   } catch (err) {
     setStatus("Error: " + err.message, true);
   } finally {
     scanBtn.disabled = false;
+    finishProgress();
   }
 }
+
+function onResult(result) {
+  if (currentResult) {
+    scanHistory.unshift(currentResult);
+    renderHistory();
+  }
+  currentResult = result;
+  render(result);
+}
+
+/* ---------- progress ---------- */
+
+function startProgress() {
+  progressEl.classList.remove("hidden");
+  progressFill.style.width = "0%";
+  progressText.textContent = "Starting…";
+  progressLog.replaceChildren();
+}
+
+function updateProgress(ev, openCount, phpCount) {
+  const pct = ev.total > 0 ? Math.round((ev.done / ev.total) * 100) : 0;
+  progressFill.style.width = pct + "%";
+  progressText.textContent =
+    `probed ${ev.done}/${ev.total} (${pct}%) · open ${openCount} · PHP ${phpCount}`;
+}
+
+function finishProgress() {
+  // Leave the final state visible briefly, then hide the bar.
+  setTimeout(() => progressEl.classList.add("hidden"), 600);
+}
+
+function logLine(text) {
+  if (!text) return;
+  const line = el("div", "log-line", text);
+  progressLog.appendChild(line);
+  while (progressLog.childElementCount > 200) {
+    progressLog.removeChild(progressLog.firstChild);
+  }
+  progressLog.scrollTop = progressLog.scrollHeight;
+}
+
+/* ---------- rendering ---------- */
 
 function setStatus(msg, isError) {
   statusEl.textContent = msg;
@@ -70,11 +175,10 @@ function setStatus(msg, isError) {
 }
 
 function render(result) {
-  renderSummary(result.summary, result.meta);
+  renderSummary(result.summary);
   const targets = result.targets || [];
   if (targets.length === 0) {
-    const p = el("p", "empty", "No open services found.");
-    resultsEl.appendChild(p);
+    resultsEl.appendChild(el("p", "empty", "No open services found."));
     return;
   }
   for (const t of targets) {
@@ -82,7 +186,8 @@ function render(result) {
   }
 }
 
-function renderSummary(s, meta) {
+function renderSummary(s) {
+  summaryEl.replaceChildren();
   const stats = [
     ["Hosts", s.hosts_scanned],
     ["Open ports", s.open_ports],
@@ -116,8 +221,7 @@ function renderService(svc) {
   const head = el("div", "svc-head");
   head.appendChild(el("span", "svc-url", svc.url || (svc.host + ":" + svc.port)));
   if (svc.php) {
-    const b = el("span", "badge " + verdict, "PHP: " + verdict + " (" + svc.php.confidence + ")");
-    head.appendChild(b);
+    head.appendChild(el("span", "badge " + verdict, "PHP: " + verdict + " (" + svc.php.confidence + ")"));
   } else if (!svc.port_open) {
     head.appendChild(el("span", "badge none", "closed"));
   }
@@ -162,8 +266,7 @@ function renderService(svc) {
     }
     if (php.phpinfo_exposed) {
       kv.appendChild(el("dt", null, "phpinfo()"));
-      const dd = el("dd", "warn", "exposed at " + php.phpinfo_url);
-      kv.appendChild(dd);
+      kv.appendChild(el("dd", "warn", "exposed at " + php.phpinfo_url));
     }
   }
   card.appendChild(kv);
@@ -172,13 +275,8 @@ function renderService(svc) {
     if (php.frameworks && php.frameworks.length) card.appendChild(chips("Frameworks", php.frameworks));
     if (php.extensions && php.extensions.length) card.appendChild(chips("Extensions", php.extensions));
     if (php.modules && php.modules.length) card.appendChild(chips("Server modules", php.modules));
-
-    if (php.vulnerabilities && php.vulnerabilities.length) {
-      card.appendChild(renderVulns(php.vulnerabilities));
-    }
-    if (php.evidence && php.evidence.length) {
-      card.appendChild(renderEvidence(php.evidence));
-    }
+    if (php.vulnerabilities && php.vulnerabilities.length) card.appendChild(renderVulns(php.vulnerabilities));
+    if (php.evidence && php.evidence.length) card.appendChild(renderEvidence(php.evidence));
   }
 
   if (svc.security_txt && svc.security_txt.present) {
@@ -253,6 +351,49 @@ function renderSecurityTxt(st) {
   box.appendChild(kv);
   return box;
 }
+
+/* ---------- history ---------- */
+
+function renderHistory() {
+  historyEl.replaceChildren();
+  if (scanHistory.length === 0) {
+    historyWrap.classList.add("hidden");
+    return;
+  }
+  historyWrap.classList.remove("hidden");
+  scanHistory.forEach((result, i) => {
+    historyEl.appendChild(renderHistoryEntry(result, scanHistory.length - i));
+  });
+}
+
+function renderHistoryEntry(result, n) {
+  const d = el("details", "history-entry");
+  const s = result.summary;
+  const when = formatTime(result.meta.started_at);
+  const hosts = (result.targets || []).map((t) => t.host);
+  const label = hosts.slice(0, 3).join(", ") + (hosts.length > 3 ? ` +${hosts.length - 3} more` : "");
+  const summary = el("summary", null,
+    `#${n} · ${when} · ${s.hosts_scanned} host(s) · PHP ${s.php_confirmed + s.php_likely} · vulns ${s.vulnerabilities}`);
+  d.appendChild(summary);
+  if (label) d.appendChild(el("div", "history-targets", label || "—"));
+  const body = el("div", "history-body");
+  const targets = result.targets || [];
+  if (targets.length === 0) {
+    body.appendChild(el("p", "empty", "No open services found."));
+  } else {
+    for (const t of targets) body.appendChild(renderHost(t));
+  }
+  d.appendChild(body);
+  return d;
+}
+
+function formatTime(iso) {
+  const dt = new Date(iso);
+  if (isNaN(dt.getTime())) return iso;
+  return dt.toLocaleTimeString();
+}
+
+/* ---------- helpers ---------- */
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
