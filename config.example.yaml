@@ -1,0 +1,75 @@
+# qphpscanner example configuration
+#
+# Pass with:  qphpscanner --config config.example.yaml
+#
+# Any value here is overridden by an explicitly-set command-line flag, and
+# positional CLI targets override the `targets` list below.
+#
+# The parser supports a small YAML subset: comments, nested maps with
+# space indentation (no tabs), scalar key/value pairs and block lists of
+# scalars. Quote values that contain special characters.
+
+# Targets to scan. Each may be a URL, IPv4/IPv6 literal, CIDR block,
+# dashed range (1.2.3.4-9 or 1.2.3.4-1.2.3.9) or per-octet wildcard (1.2.3.*).
+targets:
+  - https://example.com
+  - 10.0.0.0/28
+  - 192.168.1.1-20
+
+# Ports to check. Single, comma-separated and ranges may be mixed.
+# Leave empty to use the built-in common-web-port set.
+ports: "80,443,8080,8000-8010"
+
+# Scan depth:
+#   detect — only decide whether a service is PHP
+#   deep   — also fingerprint version, variant, extensions/modules and
+#            correlate known version-based vulnerabilities
+mode: detect
+
+# TLS handling: auto (infer from the port), on (force https) or off (force http).
+tls: auto
+
+# Per-connection timeout (Go duration: 10s, 500ms, 1m...).
+timeout: 10s
+
+# Maximum concurrent service probes.
+concurrency: 50
+
+# Follow HTTP redirects while gathering evidence.
+follow_redirects: true
+
+# Do not verify TLS certificates (useful for self-signed scan targets).
+insecure: false
+
+# Look up and parse /.well-known/security.txt (and the legacy /security.txt).
+security_txt: true
+
+# Include closed/filtered ports in the output (noisy for large ranges).
+include_closed: false
+
+# Maximum hosts a single target spec may expand to (0 = built-in default).
+max_hosts_per_spec: 65536
+
+# Override the HTTP User-Agent (empty = built-in default).
+user_agent: ""
+
+# Maximum response body bytes read for analysis (0 = built-in default).
+max_body_bytes: 524288
+
+# Machine-readable scan output: format is text | json | xml.
+# Leave file empty to write to stdout.
+output:
+  format: text
+  file: ""
+
+# Human-readable report: format is text | rtf | pdf.
+# rtf and pdf require a file. Leave both empty to skip the report.
+report:
+  format: ""
+  file: ""
+
+# Web GUI. When enabled, qphpscanner serves the browser UI instead of
+# running a one-shot scan.
+web:
+  enabled: false
+  listen: "127.0.0.1:8088"
