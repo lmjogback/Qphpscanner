@@ -52,6 +52,10 @@ version-based vulnerabilities**. It never attempts to exploit anything.
   endpoints (`/server-status`, `/nginx_status`, …) to coax the stack into
   identifying itself.
 - **Confidence tiers** (low/medium/high) on every signature and evidence item.
+- **Evidence provenance**: each evidence item records *where* it was found
+  (which header/cookie/body/behaviour), *how* it matched (the technique), the
+  literal matcher, the matched snippet with context, the body line number and
+  the exact probe (method + URL) that produced it — in every output and report.
 - **Vulnerability leads** (deep mode): a curated, version-correlated catalogue
   of ~40 PHP-core CVEs plus famous CMS-core CVEs (CVE-2024-4577,
   CVE-2019-11043, CVE-2012-1823, Drupalgeddon2, …), **extensible with external
@@ -76,6 +80,10 @@ version-based vulnerabilities**. It never attempts to exploit anything.
   jitter, and retries with backoff.
 - **Resume**: checkpoint completed services and continue an interrupted scan
   (`--resume`).
+- **Audit trail**: save a **libpcap capture** of every HTTP exchange as a TCP
+  conversation (`--pcap FILE`, opens in Wireshark/tcpdump), and/or a
+  **human-readable session log** (`--log FILE`) that records each request and
+  explains, evidence by evidence, how the verdict was decided.
 - **Live progress**: a running counter by default (updated in place on a
   terminal) and a `--verbose` mode that reports every host/port outcome;
   the web GUI shows a progress bar and a live feed.
@@ -165,6 +173,8 @@ qphpscanner --config scan.yaml
 | `--oA BASE` | write json/xml/csv/sarif/txt + HTML report to `BASE.*` |
 | `--diff FILE` | diff against a prior JSON scan |
 | `--resume FILE` | checkpoint/resume a scan |
+| `--pcap FILE` | write a libpcap capture of every HTTP exchange (audit trail) |
+| `--log FILE` | write a session log explaining each detection decision |
 | `--config FILE` | load a YAML config |
 | `--web` / `--listen` / `--web-auth u:p` | run the web GUI / address / Basic auth |
 | `--version` | print version |

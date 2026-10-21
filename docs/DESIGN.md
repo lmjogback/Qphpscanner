@@ -30,7 +30,10 @@ internal/
   version            build metadata (overridable via -ldflags)
   target             target spec parsing/expansion (URL, IP, CIDR, range, wildcard)
   portspec           port spec parsing (single, list, range)
-  probe              low-level TCP connect checks and bounded HTTP(S) fetches
+  probe              low-level TCP connect checks and bounded HTTP(S) fetches;
+                     a Recorder hook feeds every exchange to the audit trail
+  pcap               dependency-free libpcap writer: reconstructs HTTP exchanges
+                     as raw-IPv4 TCP conversations with valid checksums
   php                PHP detection, fingerprinting, vuln correlation (the core)
                      — catalog.go (data-driven vuln/EOL catalogue + feed loader),
                      vulndb.go (built-in data), cms.go (CMS version detection),
@@ -39,15 +42,17 @@ internal/
   webserver          web-server identification + reverse-proxy/CDN/WAF/LB detection
   dnsenum            subdomain discovery for "*.domain" via Certificate Transparency
   scanner            orchestration: expand → connect → probe → analyse → aggregate;
-                     enrich.go (DNS, jitter, per-host gate), checkpoint.go (resume)
+                     enrich.go (DNS, jitter, per-host gate), checkpoint.go (resume),
+                     audit.go (PCAP capture + decision log via a probe.Recorder)
   report             rendering: text, JSON, XML, RTF, PDF (from one doc model)
   config             YAML-subset parser and typed configuration
   web                embedded single-page GUI + JSON API over the scanner
 ```
 
 Dependencies flow one way: `scanner` imports `probe`, `php`, `securitytxt`,
-`target`, `portspec`; `report` and `web` import `scanner`; `cmd` wires it all
-together. There are no import cycles.
+`target`, `portspec`, `webserver` and `pcap`; `report` and `web` import
+`scanner`; `cmd` wires it all together. `pcap` is self-contained (it depends on
+nothing in the tree). There are no import cycles.
 
 ## Pipeline
 
@@ -222,6 +227,33 @@ scan resumes by skipping finished work. Requests can carry custom headers,
 Basic/Bearer/cookie auth and a Host override, and route through an http(s) or
 SOCKS5 proxy (a minimal dependency-free SOCKS5 client).
 
+### Audit trail: PCAP capture and session log
+
+The `Fetcher` exposes a `Recorder` interface that receives every request/
+response `Exchange` (across redirect hops too). The scanner's `audit.go` builds
+a concurrency-safe sink that fans each exchange out to the optional outputs:
+
+- **PCAP** (`--pcap`): the sink reconstructs the wire bytes of the request
+  (request line, `Host`, headers) and response (status line, headers, body) and
+  hands them to the `pcap` package, which synthesises a complete TCP
+  conversation — three-way handshake, PSH/ACK data segments chunked at a 1460-
+  byte MSS, and a graceful FIN teardown — with correct sequence/ack numbers and
+  valid IPv4 and TCP checksums. The file uses link type `RAW` (IPv4), so it is a
+  real libpcap file that opens in Wireshark/tcpdump. Each exchange gets a fresh
+  ephemeral client port so concurrent flows stay distinct; non-IP hosts are
+  mapped to stable `10/8` addresses. It is a faithful record of what was
+  requested and returned (plaintext, even for TLS targets, since probing is
+  local), not a packet-timing-accurate wire capture.
+- **Session log** (`--log`): a plain-text journal. Each exchange is logged as it
+  happens (method, URL, status, key response headers); then, per service, a
+  `DECISION` block states the web server, any reverse proxy, the PHP verdict and
+  version, and walks the evidence highest-weight-first, printing each item's
+  provenance (where/how/probe/matcher/snippet/line). This is the narrative
+  companion to the structured `evidence[]` in the machine outputs.
+
+Both are opened by the scanner and closed on completion; write failures are
+best-effort and never abort a scan.
+
 ## Data schema
 
 All formats serialise the same `ScanResult`:
@@ -237,7 +269,8 @@ ScanResult
 │                          version_source, end_of_life, eol_detail,
 │                          frameworks[], extensions[], modules[],
 │                          phpinfo_exposed, phpinfo_url,
-│                          evidence[]{signal,source,detail,data,weight},
+│                          evidence[]{signal,source,detail,data,weight,
+│                              confidence,where,how,pattern,snippet,line,probe},
 │                          vulnerabilities[]{id,severity,title,
 │                              affected_versions,description,reference,match_basis} },
 │                 security_txt { present, url, signed, contact[], expires,

@@ -326,6 +326,8 @@ func resolve(f *flags, set map[string]bool, cfg *config.Config, posArgs []string
 	opts.ProxyURL = f.proxy
 	opts.VerifySubdomains = f.verifySubdomains
 	opts.CheckpointPath = f.resume
+	opts.PCAPPath = f.pcapPath
+	opts.LogPath = f.logPath
 	opts.Headers = parseHeaders(f.headers)
 	if f.basicAuth != "" {
 		opts.BasicUser, opts.BasicPass = splitColon(f.basicAuth)

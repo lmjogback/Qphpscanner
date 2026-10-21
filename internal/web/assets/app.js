@@ -355,7 +355,16 @@ function renderEvidence(evidence) {
   for (const ev of evidence) {
     const li = el("li");
     li.appendChild(el("span", "ev-weight", String(ev.weight)));
-    li.appendChild(document.createTextNode(" " + ev.signal + " — " + ev.detail + (ev.data ? " [" + ev.data + "]" : "")));
+    if (ev.confidence) li.appendChild(el("span", "sev " + evSev(ev.confidence), ev.confidence));
+    li.appendChild(document.createTextNode(" " + ev.signal + " — " + ev.detail));
+    const meta = [];
+    if (ev.where) meta.push("where: " + ev.where);
+    if (ev.how) meta.push("how: " + ev.how);
+    if (ev.probe) meta.push("probe: " + ev.probe);
+    if (ev.pattern) meta.push("matcher: " + ev.pattern);
+    if (ev.line) meta.push("line " + ev.line);
+    if (meta.length) li.appendChild(el("div", "ev-meta", meta.join(" · ")));
+    if (ev.snippet) li.appendChild(el("div", "ev-snippet", ev.snippet));
     ul.appendChild(li);
   }
   d.appendChild(ul);
@@ -457,6 +466,12 @@ function formatTime(iso) {
 }
 
 /* ---------- helpers ---------- */
+
+function evSev(tier) {
+  if (tier === "high") return "high";
+  if (tier === "medium") return "medium";
+  return "low";
+}
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);

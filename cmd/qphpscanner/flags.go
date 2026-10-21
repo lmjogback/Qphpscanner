@@ -70,6 +70,10 @@ type flags struct {
 	verifySubdomains bool
 	targetsFile      string
 	webAuth          string
+
+	// audit trail
+	pcapPath string
+	logPath  string
 }
 
 func newFlagSet() *flag.FlagSet {
@@ -163,6 +167,10 @@ func bindFlags(fs *flag.FlagSet) *flags {
 	fs.StringVar(&f.diffFormat, "diff-format", "text", "diff output format: text or json")
 	fs.StringVar(&f.resume, "resume", "", "checkpoint file: record completed services and resume from it")
 	fs.StringVar(&f.webAuth, "web-auth", "", "protect the web GUI with HTTP Basic auth (user:pass)")
+
+	// Audit trail.
+	fs.StringVar(&f.pcapPath, "pcap", "", "write a libpcap capture of every HTTP exchange to this file (audit trail)")
+	fs.StringVar(&f.logPath, "log", "", "write a human-readable session log explaining each detection decision")
 
 	fs.SetOutput(os.Stderr)
 	return f

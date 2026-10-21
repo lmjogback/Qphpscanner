@@ -60,6 +60,21 @@ func Analyze(in Input) *Detection {
 		if ev.Confidence == "" {
 			ev.Confidence = confidenceTier(ev.Weight)
 		}
+		if ev.Probe == "" {
+			ev.Probe = ev.Source
+		}
+		if ev.Where == "" || ev.How == "" {
+			w, h := provenanceDefaults(ev.Signal)
+			if ev.Where == "" {
+				ev.Where = w
+			}
+			if ev.How == "" {
+				ev.How = h
+			}
+		}
+		if ev.Snippet == "" && ev.Data != "" {
+			ev.Snippet = ev.Data
+		}
 		d.Evidence = append(d.Evidence, ev)
 		d.Confidence += ev.Weight
 	}
@@ -107,6 +122,8 @@ func Analyze(in Input) *Detection {
 		addEv(Evidence{
 			Signal: "url.php-extension", Source: in.TargetURL, Weight: 40,
 			Detail: "Requested path uses a PHP file extension",
+			Where:  "request URL", How: "URL suffix match",
+			Pattern: ".php/.php5/.phtml/…", Snippet: in.TargetURL,
 		})
 	}
 
@@ -219,9 +236,15 @@ func analyzeResponse(
 	for _, sig := range headerSigs {
 		for _, val := range resp.HeaderValues(sig.header) {
 			if sig.contains == "" || containsFold(val, sig.contains) {
+				how := "header present"
+				if sig.contains != "" {
+					how = "header substring match"
+				}
 				addEv(Evidence{
 					Signal: "header." + strings.ToLower(sig.header),
 					Source: source, Weight: sig.weight, Detail: sig.detail, Data: val,
+					Where: "response header '" + sig.header + "'", How: how,
+					Pattern: sig.contains, Snippet: sig.header + ": " + val, Probe: source,
 				})
 				addFw(sig.framework)
 				if sig.variant != "" {
@@ -262,9 +285,15 @@ func analyzeResponse(
 	for _, c := range resp.Cookies {
 		for _, sig := range cookieSigs {
 			if cookieMatch(c.Name, sig) {
+				how := "cookie-name match"
+				if sig.kind == matchPrefix {
+					how = "cookie-name prefix match"
+				}
 				addEv(Evidence{
 					Signal: "cookie." + strings.ToLower(strings.Trim(sig.name, "_-")),
 					Source: source, Weight: sig.weight, Detail: sig.detail, Data: c.Name,
+					Where: "Set-Cookie header", How: how, Pattern: sig.name,
+					Snippet: "Set-Cookie: " + c.Name + "=…", Probe: source,
 				})
 				addFw(sig.framework)
 			}
@@ -275,10 +304,13 @@ func analyzeResponse(
 	body := resp.BodyString()
 	if body != "" {
 		for _, sig := range bodySigs {
-			if loc := sig.re.FindString(body); loc != "" {
+			if loc := sig.re.FindStringIndex(body); loc != nil {
+				snippet, line := bodyContext(body, loc[0], loc[1])
 				addEv(Evidence{
 					Signal: sig.id, Source: source, Weight: sig.weight,
-					Detail: sig.detail, Data: strings.TrimSpace(loc),
+					Detail: sig.detail, Data: collapseWS(body[loc[0]:loc[1]]),
+					Where: "response body", How: "regular expression",
+					Pattern: sig.re.String(), Snippet: snippet, Line: line, Probe: source,
 				})
 				addFw(sig.framework)
 			}
@@ -302,9 +334,12 @@ func analyzeResponse(
 		}
 		if m := reGenerator.FindStringSubmatch(body); m != nil {
 			gen := m[1]
+			_, line := bodyContext(body, strings.Index(body, m[0]), strings.Index(body, m[0])+len(m[0]))
 			addEv(Evidence{
 				Signal: "body.generator", Source: source, Weight: 20,
 				Detail: "HTML generator meta tag", Data: gen,
+				Where: "response body", How: "regular expression", Pattern: reGenerator.String(),
+				Snippet: collapseWS(m[0]), Line: line, Probe: source,
 			})
 			addFw(frameworkFromGenerator(gen))
 		}
@@ -492,6 +527,57 @@ func hasPHPExtension(u string) bool {
 		}
 	}
 	return false
+}
+
+// bodyContext returns a collapsed context window around a body match and the
+// 1-based line number where the match begins.
+func bodyContext(body string, start, end int) (string, int) {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(body) {
+		end = len(body)
+	}
+	line := 1 + strings.Count(body[:start], "\n")
+	lo := start - 60
+	if lo < 0 {
+		lo = 0
+	}
+	hi := end + 60
+	if hi > len(body) {
+		hi = len(body)
+	}
+	seg := collapseWS(body[lo:hi])
+	if len(seg) > 220 {
+		seg = seg[:220] + "…"
+	}
+	return seg, line
+}
+
+func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// provenanceDefaults supplies a baseline where/how for a signal by prefix.
+func provenanceDefaults(signal string) (where, how string) {
+	switch {
+	case strings.HasPrefix(signal, "header."):
+		return "response header", "header match"
+	case strings.HasPrefix(signal, "cookie."):
+		return "Set-Cookie header", "cookie-name match"
+	case strings.HasPrefix(signal, "diag."):
+		return "deep-probe response", "exposed diagnostic/tool page"
+	case strings.HasPrefix(signal, "easter-egg."):
+		return "expose_php easter-egg probe", "GUID easter-egg response"
+	case strings.HasPrefix(signal, "behavior."):
+		return "server behaviour", "behavioural probe"
+	case strings.HasPrefix(signal, "cms.version."):
+		return "response body / version file", "CMS version extraction"
+	case strings.HasPrefix(signal, "url."):
+		return "request URL", "URL inspection"
+	case strings.HasPrefix(signal, "body."):
+		return "response body", "content match"
+	default:
+		return "response", "heuristic"
+	}
 }
 
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }

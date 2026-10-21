@@ -91,6 +91,14 @@ type Options struct {
 	// CheckpointPath records completed services so a scan can resume.
 	CheckpointPath string
 
+	// --- Audit trail ---
+	// PCAPPath, when set, writes a libpcap capture reconstructing every HTTP
+	// exchange as a TCP conversation (opens in Wireshark/tcpdump).
+	PCAPPath string
+	// LogPath, when set, writes a human-readable session log explaining how
+	// each piece of evidence and each verdict was decided.
+	LogPath string
+
 	// Resolver overrides DNS resolution (primarily for testing).
 	Resolver DNSResolver
 }
@@ -171,6 +179,17 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		}
 	}
 
+	// Optional audit trail (PCAP capture and/or session log).
+	audit, err := newAuditSink(opts, specs, start)
+	if err != nil {
+		return nil, err
+	}
+	defer audit.close()
+	var recorder probe.Recorder
+	if audit != nil {
+		recorder = audit
+	}
+
 	fetcher := probe.NewFetcher(probe.FetcherConfig{
 		Timeout:         opts.Timeout,
 		Insecure:        opts.Insecure,
@@ -186,6 +205,7 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 		ProxyURL:        opts.ProxyURL,
 		Retries:         opts.Retries,
 		Limiter:         probe.NewRateLimiter(opts.RateLimit, rateBurst(opts.RateLimit)),
+		Recorder:        recorder,
 	})
 
 	// Resume support.
@@ -222,12 +242,14 @@ func Scan(ctx context.Context, specs []string, opts Options) (*ScanResult, error
 			var res ServiceResult
 			if saved, ok := cp.lookup(k); ok {
 				res = saved
+				audit.logResumed(res)
 			} else {
 				hostGate.acquire(j.ep.Host)
 				applyJitter(ctx, opts.Jitter)
 				res = scanService(ctx, fetcher, j, opts)
 				hostGate.release(j.ep.Host)
 				cp.record(res)
+				audit.logService(res)
 			}
 			results[idx] = res
 			if opts.OnProgress != nil {

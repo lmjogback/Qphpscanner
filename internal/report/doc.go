@@ -246,11 +246,21 @@ func renderPHP(d *document, det *php.Detection) {
 			max = 10
 		}
 		for _, ev := range det.Evidence[:max] {
-			line := fmt.Sprintf("[%s w%d] %s — %s", ev.Confidence, ev.Weight, ev.Signal, ev.Detail)
-			if ev.Data != "" {
-				line += fmt.Sprintf(" (%s)", collapse(ev.Data))
+			d.bullet(fmt.Sprintf("[%s w%d] %s — %s", ev.Confidence, ev.Weight, ev.Signal, ev.Detail))
+			meta := "↳ where: " + ev.Where + "; how: " + ev.How
+			if ev.Probe != "" {
+				meta += "; probe: " + ev.Probe
 			}
-			d.bullet(line)
+			if ev.Pattern != "" {
+				meta += "; matcher: " + collapse(ev.Pattern)
+			}
+			if ev.Line > 0 {
+				meta += fmt.Sprintf("; body line %d", ev.Line)
+			}
+			d.bullet(meta)
+			if ev.Snippet != "" {
+				d.bullet("↳ match: " + collapse(ev.Snippet))
+			}
 		}
 	}
 

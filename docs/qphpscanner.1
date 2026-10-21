@@ -165,6 +165,15 @@ Format for \fB\-\-diff\fR output (default text).
 .BI \-\-resume " file"
 Checkpoint completed services to \fIfile\fR and resume from it.
 .TP
+.BI \-\-pcap " file"
+Write a libpcap capture of every HTTP exchange to \fIfile\fR, reconstructing
+each request/response as a TCP conversation for a full audit trail. The file
+opens in Wireshark, tcpdump or tshark.
+.TP
+.BI \-\-log " file"
+Write a human-readable session log to \fIfile\fR recording each request and,
+per service, how every piece of evidence and each verdict was decided.
+.TP
 .BI \-\-web\-auth " user:pass"
 Protect the web GUI with HTTP Basic authentication.
 .TP
@@ -214,6 +223,9 @@ Subnet sweep, HTTPS only, JSON to a file:
 .TP
 Enumerate and scan subdomains with per-host detail:
 .B qphpscanner \-\-verbose '*.example.com'
+.TP
+Deep scan with a full audit trail (PCAP capture and decision log):
+.B qphpscanner \-\-mode deep \-\-pcap scan.pcap \-\-log scan.log example.com
 .TP
 Launch the web GUI:
 .B qphpscanner \-\-web
