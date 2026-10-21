@@ -18,6 +18,8 @@ or as a local web GUI.
 - [Report formats](#report-formats)
 - [Configuration file](#configuration-file)
 - [Web GUI](#web-gui)
+- [Resume](#resume)
+- [Audit trail (PCAP and session log)](#audit-trail-pcap-and-session-log)
 - [Exit status](#exit-status)
 - [Examples](#examples)
 - [Interpreting results](#interpreting-results)
@@ -271,6 +273,49 @@ or `json`. With `--diff`, scan output is written only to an explicit `--out`.
 the same command with the same `--resume FILE` to skip already-scanned
 services and continue — useful for large or interrupted sweeps.
 
+## Audit trail (PCAP and session log)
+
+For engagements that must be fully auditable, two optional outputs record
+exactly what the tool did and why.
+
+`--pcap FILE` writes a **libpcap capture** of every HTTP exchange the scan
+performs. Each request/response is reconstructed as a complete TCP conversation
+(SYN / SYN-ACK / ACK handshake, PSH/ACK data segments, graceful teardown) with
+valid IPv4/TCP checksums, so the file opens directly in Wireshark, tcpdump or
+tshark:
+
+```sh
+qphpscanner --mode deep --pcap scan.pcap example.com
+tcpdump -nr scan.pcap        # or: wireshark scan.pcap
+```
+
+Because probing is passive and HTTPS is terminated locally, the capture holds
+the plaintext HTTP that was exchanged (for TLS targets too); packet timing is
+approximate and link type is `RAW` (IPv4). Hostnames that are not IP literals
+are mapped to stable addresses in `10.0.0.0/8` so the capture stays valid.
+
+`--log FILE` writes a **human-readable session log**. It records each request
+and its response headers as they happen, then, per service, a `DECISION` block
+that states the web server, any reverse proxy, the PHP verdict and version, and
+— evidence by evidence — *where* each signal was found, *how* it matched, the
+probe that produced it, the literal matcher and the matched snippet:
+
+```
+DECISION  192.0.2.10:443  https://192.0.2.10:443/
+  web server: Apache 2.4.41
+  PHP verdict: CONFIRMED (confidence 100/100)
+  version: 8.1.2 — learned via X-Powered-By header
+  reasoning — 5 evidence item(s), highest-weighted first:
+    • [high w80] header.x-powered-by — X-Powered-By advertises PHP
+        where: response header 'X-Powered-By'
+        how:   header substring match
+        probe: https://192.0.2.10:443/
+        matcher: php
+        match: X-Powered-By: PHP/8.1.2
+```
+
+Both flags can be combined, and work with any scan mode and target type.
+
 ## Exit status
 
 - `0` — the scan completed (regardless of what was found).
@@ -309,6 +354,9 @@ qphpscanner --mode deep --insecure https://[2001:db8::1]:8443/
 # Drive everything from a config file
 qphpscanner --config scan.yaml
 
+# Full audit trail: PCAP capture + decision log
+qphpscanner --mode deep --pcap scan.pcap --log scan.log example.com
+
 # Web GUI
 qphpscanner --web
 ```
@@ -325,8 +373,12 @@ Each service gets a **verdict** derived from a weighted confidence score
 | `possible` | 25–49 | weak/circumstantial signals |
 | `none` | < 25 | no meaningful PHP evidence |
 
-Every contributing signal is listed as **evidence** with its weight and the raw
-matched data, so you can audit *why* a verdict was reached.
+Every contributing signal is listed as **evidence** with its weight, confidence
+tier and full provenance — *where* it was found, *how* it matched, the literal
+matcher, the matched snippet (with the body line number where applicable) and
+the exact probe (method + URL) that produced it — so you can audit *why* a
+verdict was reached down to the byte. The same reasoning is written to the
+`--log` session log, and every exchange behind it to the `--pcap` capture.
 
 **Vulnerability leads** are correlated from the detected version alone. They
 indicate issues that *affect that version*, not that the host is exploitable —

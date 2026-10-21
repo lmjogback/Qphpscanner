@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -67,6 +68,30 @@ func (r *Response) HeaderValues(key string) []string {
 	return r.Header.Values(key)
 }
 
+// Exchange is a single request/response hop, handed to a Recorder for audit
+// trails (PCAP, session log).
+type Exchange struct {
+	Time        time.Time
+	Method      string
+	URL         string
+	Host        string
+	Port        int
+	TLS         bool
+	ReqHost     string // Host header actually sent
+	ReqHeaders  http.Header
+	Status      int
+	Proto       string
+	RespHeaders http.Header
+	RespBody    []byte
+	Err         string
+}
+
+// Recorder receives every HTTP exchange the Fetcher performs. Implementations
+// must be safe for concurrent use.
+type Recorder interface {
+	Record(Exchange)
+}
+
 // Fetcher issues HTTP(S) requests with a fixed policy.
 type Fetcher struct {
 	client       *http.Client
@@ -83,6 +108,7 @@ type Fetcher struct {
 	retries      int
 	retryBackoff time.Duration
 	limiter      Limiter
+	recorder     Recorder
 }
 
 // FetcherConfig configures a Fetcher.
@@ -116,6 +142,8 @@ type FetcherConfig struct {
 	RetryBackoff time.Duration
 	// Limiter, when set, gates every outbound request (global rate limiting).
 	Limiter Limiter
+	// Recorder, when set, receives every request/response for audit trails.
+	Recorder Recorder
 }
 
 // NewFetcher builds a Fetcher. The underlying transport never follows
@@ -185,7 +213,42 @@ func NewFetcher(cfg FetcherConfig) *Fetcher {
 		retries:      cfg.Retries,
 		retryBackoff: cfg.RetryBackoff,
 		limiter:      cfg.Limiter,
+		recorder:     cfg.Recorder,
 	}
+}
+
+func (f *Fetcher) record(req *http.Request, resp *http.Response, body []byte, errStr string, ts time.Time) {
+	if f.recorder == nil {
+		return
+	}
+	ex := Exchange{
+		Time: ts, Method: req.Method, URL: req.URL.String(),
+		Host: req.URL.Hostname(), Port: portOf(req.URL),
+		TLS: req.URL.Scheme == "https", ReqHeaders: req.Header.Clone(), Err: errStr,
+	}
+	ex.ReqHost = req.Host
+	if ex.ReqHost == "" {
+		ex.ReqHost = req.URL.Host
+	}
+	if resp != nil {
+		ex.Status = resp.StatusCode
+		ex.Proto = resp.Proto
+		ex.RespHeaders = resp.Header.Clone()
+		ex.RespBody = body
+	}
+	f.recorder.Record(ex)
+}
+
+func portOf(u *url.URL) int {
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			return n
+		}
+	}
+	if u.Scheme == "https" {
+		return 443
+	}
+	return 80
 }
 
 // applyProxy configures the transport for an http(s) or socks5 proxy.
@@ -254,6 +317,7 @@ func (f *Fetcher) do(ctx context.Context, method, rawURL string) *Response {
 	cur := rawURL
 	seen := map[string]bool{}
 	for hop := 0; hop <= f.maxRedirects; hop++ {
+		hopStart := time.Now()
 		out.Hops = hop
 		req, err := http.NewRequestWithContext(ctx, method, cur, nil)
 		if err != nil {
@@ -293,6 +357,7 @@ func (f *Fetcher) do(ctx context.Context, method, rawURL string) *Response {
 		resp, err := f.client.Do(req)
 		if err != nil {
 			out.Err = cleanErr(err)
+			f.record(req, nil, nil, out.Err, hopStart)
 			out.Elapsed = time.Since(start)
 			return out
 		}
@@ -314,13 +379,15 @@ func (f *Fetcher) do(ctx context.Context, method, rawURL string) *Response {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, f.maxBody))
 			_ = resp.Body.Close()
 			out.Body = body
+			f.record(req, resp, body, "", hopStart)
 			out.Elapsed = time.Since(start)
 			return out
 		}
 
-		// Redirect: drain and move on.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		// Redirect: capture a bounded prefix for the audit trail, then move on.
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
+		f.record(req, resp, rb, "", hopStart)
 
 		next, err := resolveLocation(cur, location)
 		if err != nil {

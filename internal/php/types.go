@@ -32,6 +32,22 @@ type Evidence struct {
 	Weight int `json:"weight"`
 	// Confidence is a human tier (low/medium/high) derived from Weight.
 	Confidence string `json:"confidence"`
+
+	// --- Provenance metadata (where / how / what) ---
+	// Where names the location of the match, e.g. "response header
+	// 'X-Powered-By'", "response body", "cookie", "request URL".
+	Where string `json:"where,omitempty"`
+	// How names the matching technique, e.g. "header substring match",
+	// "regular expression", "cookie-name match", "URL suffix".
+	How string `json:"how,omitempty"`
+	// Pattern is the literal matcher used (the substring or regex source).
+	Pattern string `json:"pattern,omitempty"`
+	// Snippet is the matched text with a little surrounding context.
+	Snippet string `json:"snippet,omitempty"`
+	// Line is the 1-based line number in the response body, when applicable.
+	Line int `json:"line,omitempty"`
+	// Probe is the request (method + URL) whose response produced the match.
+	Probe string `json:"probe,omitempty"`
 }
 
 // confidenceTier maps a signal weight to a low/medium/high label.
