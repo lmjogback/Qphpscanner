@@ -10,6 +10,7 @@ import (
 
 	"github.com/rom/qphpscanner/internal/php"
 	"github.com/rom/qphpscanner/internal/scanner"
+	"github.com/rom/qphpscanner/internal/webserver"
 )
 
 func richResult() *scanner.ScanResult {
@@ -20,7 +21,12 @@ func richResult() *scanner.ScanResult {
 			Host: "h", Addresses: []string{"203.0.113.5"}, PTR: []string{"host.example"},
 			Services: []scanner.ServiceResult{{
 				Host: "h", Port: 443, TLS: true, Scheme: "https", URL: "https://h/", PortOpen: true,
-				HTTP: &scanner.HTTPInfo{Status: 200, Server: "Apache", PoweredBy: "PHP/7.4.3"},
+				HTTP:   &scanner.HTTPInfo{Status: 200, Server: "cloudflare", PoweredBy: "PHP/7.4.3"},
+				Server: &webserver.ServerInfo{Product: "nginx", Version: "1.25.3", Modules: []string{"OpenSSL/3.0"}},
+				Proxy: &webserver.ProxyInfo{
+					Present: true, Concealed: true, CDN: []string{"Cloudflare"}, WAF: []string{"Cloudflare"},
+					Note: "A WAF / security proxy (Cloudflare) is in front.",
+				},
 				PHP: &php.Detection{
 					IsPHP: true, Verdict: php.VerdictConfirmed, Confidence: 95, Variant: "PHP",
 					Version: "7.4.3", EndOfLife: true, EOLDetail: "PHP 7.4 end of life",
@@ -109,6 +115,26 @@ func TestHTMLReport(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("HTML missing %q", want)
 		}
+	}
+}
+
+func TestProxyServerRendering(t *testing.T) {
+	res := richResult()
+	var txt bytes.Buffer
+	if err := WriteReport(&txt, res, "text"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Reverse proxy", "Cloudflare", "nginx 1.25.3", "concealed"} {
+		if !strings.Contains(txt.String(), want) {
+			t.Fatalf("text report missing %q", want)
+		}
+	}
+	var csvb bytes.Buffer
+	if err := WriteOutput(&csvb, res, "csv"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(csvb.String(), "server_product") || !strings.Contains(csvb.String(), "nginx") {
+		t.Fatal("CSV missing server columns")
 	}
 }
 

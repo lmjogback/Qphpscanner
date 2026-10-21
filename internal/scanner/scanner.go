@@ -16,6 +16,7 @@ import (
 	"github.com/rom/qphpscanner/internal/securitytxt"
 	"github.com/rom/qphpscanner/internal/target"
 	"github.com/rom/qphpscanner/internal/version"
+	"github.com/rom/qphpscanner/internal/webserver"
 )
 
 // Mode selects how deep the analysis goes.
@@ -364,6 +365,12 @@ func summarise(results []ServiceResult, hosts []string, opts Options) Summary {
 		if r.SecurityTxt != nil && r.SecurityTxt.Present {
 			s.SecurityTxt++
 		}
+		if r.Proxy != nil && r.Proxy.Present {
+			s.BehindProxy++
+			if len(r.Proxy.WAF) > 0 {
+				s.WAFProtected++
+			}
+		}
 	}
 	return s
 }
@@ -423,6 +430,26 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 		res.SecurityTxt = fetchSecurityTxt(ctx, fetcher, base)
 	}
 
+	// Active identification probes (deep mode): an OPTIONS request, a
+	// guaranteed-404 to harvest the error-page server signature/WAF block page,
+	// and a few status endpoints. These feed web-server/proxy fingerprinting
+	// and PHP version leakage.
+	var fpExtra []*probe.Response
+	var notFound *probe.Response
+	if opts.Mode == ModeDeep {
+		fpExtra = append(fpExtra, fetcher.Request(ctx, "OPTIONS", base+"/"))
+		notFound = fetcher.Get(ctx, base+"/qphpscanner_probe_404")
+		fpExtra = append(fpExtra, notFound)
+		for _, p := range serverStatusPaths() {
+			fpExtra = append(fpExtra, fetcher.Get(ctx, base+p))
+		}
+	}
+
+	// Web server / reverse proxy / CDN / WAF identification.
+	wsRes := webserver.Analyze(root, fpExtra)
+	res.Server = &wsRes.Server
+	res.Proxy = &wsRes.Proxy
+
 	// Build PHP analysis input.
 	in := php.Input{
 		TargetURL: res.URL,
@@ -439,6 +466,10 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 			u := base + ensureLeadingSlash(p)
 			in.Extra[u] = fetcher.Get(ctx, u)
 		}
+		// The 404 page can leak a PHP version via an Apache signature.
+		if notFound != nil {
+			in.Extra[base+"/qphpscanner_probe_404"] = notFound
+		}
 		in.EasterCredits = fetcher.Get(ctx, base+"/"+php.EasterEggCredits)
 		in.EasterLogo = fetcher.Get(ctx, base+"/"+php.EasterEggLogo)
 		in.Favicon = fetcher.Get(ctx, base+php.FaviconPath)
@@ -448,6 +479,19 @@ func scanService(ctx context.Context, fetcher *probe.Fetcher, j job, opts Option
 	res.PHP = php.Analyze(in)
 	res.DurationMS = time.Since(start).Milliseconds()
 	return res
+}
+
+// serverStatusPaths are read-only endpoints that often leak the web server,
+// its modules or status (probed in deep mode).
+func serverStatusPaths() []string {
+	return []string{
+		"/server-status",
+		"/server-info",
+		"/nginx_status",
+		"/status",
+		"/web.config",
+		"/crossdomain.xml",
+	}
 }
 
 func fetchSecurityTxt(ctx context.Context, fetcher *probe.Fetcher, base string) *securitytxt.SecurityTxt {

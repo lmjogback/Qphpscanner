@@ -30,6 +30,20 @@ type Evidence struct {
 	Data string `json:"data,omitempty"`
 	// Weight is this signal's contribution to the confidence score.
 	Weight int `json:"weight"`
+	// Confidence is a human tier (low/medium/high) derived from Weight.
+	Confidence string `json:"confidence"`
+}
+
+// confidenceTier maps a signal weight to a low/medium/high label.
+func confidenceTier(weight int) string {
+	switch {
+	case weight >= 60:
+		return "high"
+	case weight >= 30:
+		return "medium"
+	default:
+		return "low"
+	}
 }
 
 // Vulnerability is a known issue correlated purely from the detected version.

@@ -57,6 +57,9 @@ func Analyze(in Input) *Detection {
 		if len(ev.Data) > maxDataLen {
 			ev.Data = ev.Data[:maxDataLen] + "…"
 		}
+		if ev.Confidence == "" {
+			ev.Confidence = confidenceTier(ev.Weight)
+		}
 		d.Evidence = append(d.Evidence, ev)
 		d.Confidence += ev.Weight
 	}

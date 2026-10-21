@@ -10,6 +10,7 @@ import (
 	"github.com/rom/qphpscanner/internal/php"
 	"github.com/rom/qphpscanner/internal/probe"
 	"github.com/rom/qphpscanner/internal/securitytxt"
+	"github.com/rom/qphpscanner/internal/webserver"
 )
 
 // ScanResult is the complete output of a scan run.
@@ -42,6 +43,8 @@ type Summary struct {
 	PHPPossible     int `json:"php_possible" xml:"php_possible"`
 	Vulnerabilities int `json:"vulnerabilities" xml:"vulnerabilities"`
 	SecurityTxt     int `json:"security_txt" xml:"security_txt"`
+	BehindProxy     int `json:"behind_proxy" xml:"behind_proxy"`
+	WAFProtected    int `json:"waf_protected" xml:"waf_protected"`
 }
 
 // TargetResult groups all services discovered on one host.
@@ -64,6 +67,8 @@ type ServiceResult struct {
 	Error       string                   `json:"error,omitempty" xml:"error,omitempty"`
 	Banner      string                   `json:"banner,omitempty" xml:"banner,omitempty"`
 	HTTP        *HTTPInfo                `json:"http,omitempty" xml:"http,omitempty"`
+	Server      *webserver.ServerInfo    `json:"server,omitempty" xml:"server,omitempty"`
+	Proxy       *webserver.ProxyInfo     `json:"proxy,omitempty" xml:"proxy,omitempty"`
 	PHP         *php.Detection           `json:"php,omitempty" xml:"php,omitempty"`
 	SecurityTxt *securitytxt.SecurityTxt `json:"security_txt,omitempty" xml:"security_txt,omitempty"`
 	DurationMS  int64                    `json:"duration_ms" xml:"duration_ms"`

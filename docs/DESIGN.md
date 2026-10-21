@@ -36,6 +36,7 @@ internal/
                      vulndb.go (built-in data), cms.go (CMS version detection),
                      favicon.go (mmh3 favicon hash)
   securitytxt        RFC 9116 security.txt discovery and parsing
+  webserver          web-server identification + reverse-proxy/CDN/WAF/LB detection
   dnsenum            subdomain discovery for "*.domain" via Certificate Transparency
   scanner            orchestration: expand → connect → probe → analyse → aggregate;
                      enrich.go (DNS, jitter, per-host gate), checkpoint.go (resume)
@@ -187,6 +188,28 @@ the CMS catalogue. Correlation runs only in deep mode; PHP-core entries apply
 only to the native PHP/Zend Server variant. Every result carries a `match_basis`
 noting any required SAPI/configuration. These are **leads derived from the
 version string**, never confirmed exploited findings.
+
+### Web server, reverse proxy, CDN and WAF
+
+The `webserver` package analyses the root response plus deep-mode probe
+responses (an `OPTIONS` request, a guaranteed-404, and status endpoints) to:
+
+- **Identify the web server** — product, version, OS hint and server-level
+  modules — from `Server` banners (all values are considered), module/runtime
+  headers (`X-AspNet-Version`, `X-Mod-Pagespeed`, …), the `DAV` header, and
+  error-page signatures (nginx/Apache/IIS/LiteSpeed). If a `Server` value is a
+  CDN token the origin product is reported as concealed.
+- **Detect a front layer** — CDN, WAF, cache or load balancer — from
+  distinctive headers (`CF-RAY`, `X-Amz-Cf-Id`, `X-Sucuri-ID`, `X-Iinfo`,
+  `X-Varnish`, …), cookies (`__cf_bm`, `incap_ses_*`, `AWSALB`, `BIGipServer*`,
+  …) and block/challenge page bodies (Cloudflare, Sucuri, Incapsula,
+  ModSecurity, Wordfence, F5 ASM). Any front layer sets `Concealed`, so the
+  operator knows the real origin reply may be hidden, cached, filtered or
+  challenged; a note summarises the implication.
+
+Every proxy/server finding carries a numeric `confidence` (0-100) and a
+low/medium/high `tier`; PHP evidence items carry the same tier (derived from
+their weight). This makes the basis for each conclusion auditable.
 
 ### Enrichment, politeness and resume
 

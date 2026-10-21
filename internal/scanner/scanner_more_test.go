@@ -3,6 +3,8 @@ package scanner
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,6 +149,40 @@ func TestOpenNonHTTPPort(t *testing.T) {
 	}
 	if svc.HTTP != nil {
 		t.Fatal("non-HTTP service should have no HTTP info")
+	}
+}
+
+func TestScanDetectsProxyAndServer(t *testing.T) {
+	t.Setenv("NO_PROXY", "*")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "cloudflare")
+		w.Header().Set("CF-RAY", "7abc-LHR")
+		w.Header().Set("X-Powered-By", "PHP/8.2.0")
+		_, _ = w.Write([]byte("<title>t</title>"))
+	}))
+	defer ts.Close()
+
+	res, err := Scan(context.Background(), []string{ts.URL}, Options{
+		Mode: ModeDetect, TLSMode: TLSOff, Timeout: 3 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := res.Targets[0].Services[0]
+	if svc.Proxy == nil || !svc.Proxy.Present || !svc.Proxy.Concealed {
+		t.Fatalf("expected a concealing proxy: %+v", svc.Proxy)
+	}
+	found := false
+	for _, c := range svc.Proxy.CDN {
+		if c == "Cloudflare" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected Cloudflare CDN: %v", svc.Proxy.CDN)
+	}
+	if res.Summary.BehindProxy != 1 {
+		t.Fatalf("summary BehindProxy = %d", res.Summary.BehindProxy)
 	}
 }
 

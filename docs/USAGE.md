@@ -242,6 +242,16 @@ To scan applications behind auth or virtual hosts:
 - `--banners` — for open ports that do not speak HTTP, read a short service
   banner (SSH/FTP/SMTP announce themselves) so the port is labelled.
 
+Every HTTP service is also checked for a **web server** (product/version/OS/
+modules) and for a **reverse proxy / CDN / WAF / load balancer** in front.
+When a front layer is found the result is flagged as *concealed* — the real
+origin reply may be hidden, cached, filtered or challenged — with a note
+explaining the implication. Front-layer detection works from response headers
+and cookies even in `detect` mode; **deep** mode adds active identification
+probes (an `OPTIONS` request, a guaranteed-404 to harvest error-page
+signatures and WAF block pages, and status endpoints such as `/server-status`
+and `/nginx_status`). Every signal carries a confidence tier (low/medium/high).
+
 ## Vulnerability feeds
 
 Deep mode correlates versions against the built-in catalogue. Merge extra data

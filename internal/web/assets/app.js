@@ -267,6 +267,21 @@ function renderService(svc) {
     if (svc.error) add("Error", svc.error);
   }
 
+  const ws = svc.server;
+  if (ws) {
+    if (ws.product) add("Web server", ws.product + (ws.version ? " " + ws.version : ""));
+    if (ws.os) add("Server OS hint", ws.os);
+  }
+  const px = svc.proxy;
+  if (px && px.present) {
+    kv.appendChild(el("dt", null, "Reverse proxy"));
+    kv.appendChild(el("dd", "warn", "YES — origin reply concealed"));
+    if (px.cdn && px.cdn.length) add("  CDN", px.cdn.join(", "));
+    if (px.waf && px.waf.length) add("  WAF", px.waf.join(", "));
+    if (px.load_balancers && px.load_balancers.length) add("  Load balancer", px.load_balancers.join(", "));
+    if (px.caches && px.caches.length) add("  Cache/proxy", px.caches.join(", "));
+  }
+
   const php = svc.php;
   if (php) {
     if (php.variant) add("Variant", php.variant);
@@ -292,11 +307,13 @@ function renderService(svc) {
   if (php) {
     if (php.frameworks && php.frameworks.length) card.appendChild(chips("Frameworks", php.frameworks));
     if (php.addons && php.addons.length) card.appendChild(chips("Addons / tools", php.addons));
-    if (php.extensions && php.extensions.length) card.appendChild(chips("Extensions", php.extensions));
-    if (php.modules && php.modules.length) card.appendChild(chips("Server modules", php.modules));
+    if (php.extensions && php.extensions.length) card.appendChild(chips("PHP extensions", php.extensions));
     if (php.vulnerabilities && php.vulnerabilities.length) card.appendChild(renderVulns(php.vulnerabilities));
     if (php.evidence && php.evidence.length) card.appendChild(renderEvidence(php.evidence));
   }
+
+  if (ws && ws.modules && ws.modules.length) card.appendChild(chips("Server modules", ws.modules));
+  if (px && px.present && px.note) card.appendChild(el("p", "note", px.note));
 
   if (svc.security_txt && svc.security_txt.present) {
     card.appendChild(renderSecurityTxt(svc.security_txt));
