@@ -213,13 +213,18 @@ func applyProxy(t *http.Transport, base *net.Dialer, proxyURL string) error {
 	}
 }
 
-// Get fetches rawURL, following redirects (when enabled) up to the configured
-// limit and aggregating evidence across hops. Transient network failures are
-// retried up to the configured retry count with exponential backoff.
+// Get fetches rawURL with the GET method.
 func (f *Fetcher) Get(ctx context.Context, rawURL string) *Response {
+	return f.Request(ctx, http.MethodGet, rawURL)
+}
+
+// Request fetches rawURL with the given method, following redirects (when
+// enabled) up to the configured limit and aggregating evidence across hops.
+// Transient network failures are retried with exponential backoff.
+func (f *Fetcher) Request(ctx context.Context, method, rawURL string) *Response {
 	var out *Response
 	for attempt := 0; ; attempt++ {
-		out = f.do(ctx, http.MethodGet, rawURL)
+		out = f.do(ctx, method, rawURL)
 		if out.Err == "" || !transientErr(out.Err) || attempt >= f.retries {
 			return out
 		}

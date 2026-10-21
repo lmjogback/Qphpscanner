@@ -39,6 +39,19 @@ version-based vulnerabilities**. It never attempts to exploit anything.
 - **CMS core version detection** (deep mode): WordPress / Drupal / Joomla core
   versions from generator tags, `readme.html`, `CHANGELOG.txt` and manifests —
   and their correlated CVEs.
+- **Reverse proxy / CDN / WAF / load-balancer detection**: flags when a front
+  layer (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, Varnish, F5,
+  AWS ELB, …) sits in front, so you know the **origin reply is concealed** and
+  possibly filtered/protected — with a plain-language note on what that means.
+- **Web-server identification**: product, version, OS hint and server-level
+  modules (Apache/nginx/IIS/LiteSpeed/OpenResty/Caddy/…; `mod_*`, OpenSSL,
+  ASP.NET, WebDAV, mod_pagespeed, …) from `Server` banners, error-page
+  signatures and `OPTIONS`.
+- **Active identification probes** (deep mode): an `OPTIONS` request, a
+  guaranteed-404 to harvest error-page signatures/WAF block pages, and status
+  endpoints (`/server-status`, `/nginx_status`, …) to coax the stack into
+  identifying itself.
+- **Confidence tiers** (low/medium/high) on every signature and evidence item.
 - **Vulnerability leads** (deep mode): a curated, version-correlated catalogue
   of ~40 PHP-core CVEs plus famous CMS-core CVEs (CVE-2024-4577,
   CVE-2019-11043, CVE-2012-1823, Drupalgeddon2, …), **extensible with external

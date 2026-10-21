@@ -16,7 +16,7 @@ func writeCSV(w io.Writer, res *scanner.ScanResult) error {
 		"http_status", "server", "powered_by",
 		"php_verdict", "php_confidence", "php_variant", "php_version",
 		"end_of_life", "frameworks", "vuln_count", "vuln_ids", "max_severity",
-		"security_txt",
+		"security_txt", "server_product", "server_version", "behind_proxy", "cdn", "waf",
 	}
 	if err := cw.Write(header); err != nil {
 		return err
@@ -52,6 +52,19 @@ func writeCSV(w io.Writer, res *scanner.ScanResult) error {
 				row = append(row, "", "", "", "", "", "", "0", "", "")
 			}
 			row = append(row, fmt.Sprintf("%t", s.SecurityTxt != nil && s.SecurityTxt.Present))
+
+			serverProduct, serverVersion := "", ""
+			if s.Server != nil {
+				serverProduct, serverVersion = s.Server.Product, s.Server.Version
+			}
+			behindProxy, cdn, waf := "false", "", ""
+			if s.Proxy != nil && s.Proxy.Present {
+				behindProxy = "true"
+				cdn = strings.Join(s.Proxy.CDN, "|")
+				waf = strings.Join(s.Proxy.WAF, "|")
+			}
+			row = append(row, serverProduct, serverVersion, behindProxy, cdn, waf)
+
 			if err := cw.Write(row); err != nil {
 				return err
 			}

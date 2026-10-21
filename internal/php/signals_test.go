@@ -6,6 +6,23 @@ import (
 	"github.com/rom/qphpscanner/internal/probe"
 )
 
+func TestEvidenceConfidenceTiers(t *testing.T) {
+	d := Analyze(Input{TargetURL: "http://h/app.php", Root: resp(200,
+		map[string]string{"X-Powered-By": "PHP/8.2.0"}, []string{"PHPSESSID"}, "")})
+	if len(d.Evidence) == 0 {
+		t.Fatal("no evidence")
+	}
+	for _, ev := range d.Evidence {
+		if ev.Confidence == "" {
+			t.Fatalf("evidence %q missing confidence tier", ev.Signal)
+		}
+		want := confidenceTier(ev.Weight)
+		if ev.Confidence != want {
+			t.Fatalf("evidence %q tier %q, want %q (w=%d)", ev.Signal, ev.Confidence, want, ev.Weight)
+		}
+	}
+}
+
 func TestApacheSignatureVersion(t *testing.T) {
 	body := `<html><body><h1>Not Found</h1><hr>` +
 		`<address>Apache/2.4.29 (Ubuntu) PHP/7.2.34 Server at example.com Port 80</address>` +

@@ -11,6 +11,7 @@ import (
 	"github.com/rom/qphpscanner/internal/php"
 	"github.com/rom/qphpscanner/internal/scanner"
 	"github.com/rom/qphpscanner/internal/securitytxt"
+	"github.com/rom/qphpscanner/internal/webserver"
 )
 
 type blockKind int
@@ -144,9 +145,52 @@ func renderService(d *document, svc scanner.ServiceResult) {
 		d.kv("TLS", fmt.Sprintf("%s (%s)", h.TLS.Version, h.TLS.CipherSuite))
 	}
 
+	renderServer(d, svc.Server)
+	renderProxy(d, svc.Proxy)
 	renderPHP(d, svc.PHP)
 	renderSecurityTxt(d, svc.SecurityTxt)
 	d.spacer()
+}
+
+func renderServer(d *document, s *webserver.ServerInfo) {
+	if s == nil {
+		return
+	}
+	if s.Product != "" {
+		v := s.Product
+		if s.Version != "" {
+			v += " " + s.Version
+		}
+		d.kv("Web server", v)
+	}
+	if s.OS != "" {
+		d.kv("Server OS hint", s.OS)
+	}
+	if len(s.Modules) > 0 {
+		d.kv("Server modules", strings.Join(s.Modules, ", "))
+	}
+}
+
+func renderProxy(d *document, p *webserver.ProxyInfo) {
+	if p == nil || !p.Present {
+		return
+	}
+	d.kv("Reverse proxy", "YES — origin reply is concealed")
+	if len(p.CDN) > 0 {
+		d.kv("  CDN", strings.Join(p.CDN, ", "))
+	}
+	if len(p.WAF) > 0 {
+		d.kv("  WAF", strings.Join(p.WAF, ", "))
+	}
+	if len(p.LoadBalancers) > 0 {
+		d.kv("  Load balancer", strings.Join(p.LoadBalancers, ", "))
+	}
+	if len(p.Caches) > 0 {
+		d.kv("  Cache/proxy", strings.Join(p.Caches, ", "))
+	}
+	if p.Note != "" {
+		d.text(p.Note)
+	}
 }
 
 func renderPHP(d *document, det *php.Detection) {
@@ -189,10 +233,7 @@ func renderPHP(d *document, det *php.Detection) {
 		d.kv("Favicon hash", det.FaviconHash+" (mmh3)")
 	}
 	if len(det.Extensions) > 0 {
-		d.kv("Extensions", strings.Join(det.Extensions, ", "))
-	}
-	if len(det.Modules) > 0 {
-		d.kv("Server modules", strings.Join(det.Modules, ", "))
+		d.kv("PHP extensions", strings.Join(det.Extensions, ", "))
 	}
 	if det.PHPInfoExposed {
 		d.kv("phpinfo() exposed", det.PHPInfoURL)
@@ -205,7 +246,7 @@ func renderPHP(d *document, det *php.Detection) {
 			max = 10
 		}
 		for _, ev := range det.Evidence[:max] {
-			line := fmt.Sprintf("[%d] %s — %s", ev.Weight, ev.Signal, ev.Detail)
+			line := fmt.Sprintf("[%s w%d] %s — %s", ev.Confidence, ev.Weight, ev.Signal, ev.Detail)
 			if ev.Data != "" {
 				line += fmt.Sprintf(" (%s)", collapse(ev.Data))
 			}
